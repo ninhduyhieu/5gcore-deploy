@@ -1,0 +1,84 @@
+- name: Wait for join command file
+  stat:
+    path: "{{ join_command_file }}"
+  register: join_file
+  retries: 60
+  delay: 10
+  until: join_file.stat.exists
+
+- name: Wait for kube-apiserver port on master
+  wait_for:
+    host: "{{ apiserver_advertise_address }}"
+    port: 6443
+    timeout: 600
+    delay: 10
+
+- name: Pause a bit for control-plane stabilization
+  pause:
+    seconds: 20
+
+# =========================
+# CHECK NODE STATE
+# =========================
+
+- name: Check if worker already joined
+  stat:
+    path: /etc/kubernetes/kubelet.conf
+  register: worker_kubelet_conf
+
+# =========================
+# SKIP IF ALREADY JOINED
+# =========================
+
+- name: Skip join if already part of cluster
+  debug:
+    msg: "Worker {{ inventory_hostname }} already joined cluster, skipping join"
+  when: worker_kubelet_conf.stat.exists
+
+# =========================
+# CLEAN + JOIN (ONLY IF NOT JOINED)
+# =========================
+
+- block:
+
+    - name: Ensure clean state before join
+      shell: |
+        kubeadm reset -f || true
+        systemctl stop kubelet || true
+        rm -rf /etc/kubernetes/*
+        rm -rf /var/lib/kubelet/*
+        rm -rf /var/lib/cni/*
+        iptables -F || true
+        iptables -t nat -F || true
+        iptables -t mangle -F || true
+        iptables -X || true
+        systemctl restart containerd
+        systemctl restart kubelet
+      args:
+        executable: /bin/bash
+      changed_when: true
+
+    - name: Join cluster
+      shell: bash {{ join_command_file }}
+      args:
+        executable: /bin/bash
+      register: join_result
+      retries: 5
+      delay: 20
+      until: join_result.rc == 0
+      changed_when: true
+
+  when: not worker_kubelet_conf.stat.exists
+
+# =========================
+# VERIFY NODE READY (OPTIONAL BUT VERY GOOD)
+# =========================
+
+- name: Wait until node becomes Ready (using kubelet config on worker)
+  shell: |
+    kubectl --kubeconfig=/etc/kubernetes/kubelet.conf get node {{ inventory_hostname }} --no-headers | awk '{print $2}'
+  register: worker_ready
+  retries: 30
+  delay: 10
+  until: "'Ready' in worker_ready.stdout"
+  changed_when: false

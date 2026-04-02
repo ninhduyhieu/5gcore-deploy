@@ -1,0 +1,6 @@
+- name: Load custom images into node containerd
+  hosts: "{{ node_name }}"
+  become: true
+  gather_facts: true
+  roles:
+    - load_custom_images

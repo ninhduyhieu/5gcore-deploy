@@ -1,0 +1,12 @@
+---
+- name: Install gtp5g and deploy external UPF
+  hosts: "{{ node_name }}"
+  become: yes
+  gather_facts: yes
+  vars_files:
+    - /vagrant/ansible/vars.yml
+  roles:
+    - role: install_gtp5g
+      when: deploy_upf_enabled | bool
+    - role: deploy_upf_external
+      when: deploy_upf_enabled | bool

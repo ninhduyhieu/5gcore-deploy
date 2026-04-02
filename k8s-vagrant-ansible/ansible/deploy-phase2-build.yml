@@ -1,0 +1,6 @@
+- name: Build custom images on master
+  hosts: masters
+  become: true
+  gather_facts: true
+  roles:
+    - deploy_core_build

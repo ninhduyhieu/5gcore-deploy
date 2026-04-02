@@ -1,0 +1,21 @@
+{
+	"plmnId": {
+		"mcc": "450",
+		"mnc": "05"
+	},
+	"slice": {
+		"sst" : 1,
+		"sd": "000001"
+	},
+	"mesh": {
+		"registrar": "127.0.0.2",
+		"bind": "127.0.0.7",
+		"labels": {
+			"plmnId":"450-05",
+			"app": "smf",
+			"slice": "1-000001",
+			"version": "v1",
+			"os": "debian12"
+		}
+	}
+}

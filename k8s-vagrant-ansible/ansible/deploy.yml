@@ -1,0 +1,71 @@
+---
+- name: Deploy ETRI 5GC core phase on master
+  hosts: localhost
+  connection: local
+  become: yes
+  gather_facts: yes
+  vars_files:
+    - /vagrant/ansible/vars.yml
+
+  pre_tasks:
+    - name: Wait until kube-apiserver is reachable
+      wait_for:
+        host: "{{ master_ip }}"
+        port: 6443
+        timeout: 300
+
+    - name: Wait until all expected nodes are registered
+      shell: kubectl --kubeconfig={{ kubeconfig_path }} get nodes --no-headers | awk '{print $1}'
+      register: node_list
+      retries: 40
+      delay: 15
+      until:
+        - "'k8s-master' in node_list.stdout"
+        - "'k8s-worker1' in node_list.stdout"
+        - "'k8s-worker2' in node_list.stdout"
+      changed_when: false
+
+    - name: Wait until all expected nodes are Ready
+      shell: kubectl --kubeconfig={{ kubeconfig_path }} get nodes --no-headers
+      register: ready_nodes
+      retries: 40
+      delay: 15
+      until:
+        - ready_nodes.stdout is search('k8s-master.* Ready ')
+        - ready_nodes.stdout is search('k8s-worker1.* Ready ')
+        - ready_nodes.stdout is search('k8s-worker2.* Ready ')
+      changed_when: false
+
+    - name: Show current nodes before deploy
+      debug:
+        var: ready_nodes.stdout_lines
+
+    - name: Ensure target namespace exists
+      shell: kubectl --kubeconfig={{ kubeconfig_path }} get namespace {{ core_namespace }} || kubectl --kubeconfig={{ kubeconfig_path }} create namespace {{ core_namespace }}
+      changed_when: false
+
+  roles:
+    - label_nodes
+    - role: deploy_core
+      when: deploy_core_enabled | bool
+    - expose_gateway
+
+  post_tasks:
+    - name: Show all pods after deploy
+      shell: kubectl --kubeconfig={{ kubeconfig_path }} get pods -A -o wide
+      register: pods_after_deploy
+      changed_when: false
+
+    - name: Show pod list
+      debug:
+        var: pods_after_deploy.stdout_lines
+
+    - name: Show core namespace pods
+      shell: kubectl --kubeconfig={{ kubeconfig_path }} -n {{ core_namespace }} get pods -o wide
+      register: core_pods_after_deploy
+      failed_when: false
+      changed_when: false
+
+    - name: Show core pod list
+      debug:
+        var: core_pods_after_deploy.stdout_lines

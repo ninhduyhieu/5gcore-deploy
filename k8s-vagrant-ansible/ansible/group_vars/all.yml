@@ -1,0 +1,59 @@
+pod_network_cidr: "10.244.0.0/16"
+kubernetes_version: "1.29.15-1.1"
+apiserver_advertise_address: "192.168.56.10"
+cri_socket: "unix:///run/containerd/containerd.sock"
+
+etri_namespace: "etri6g"
+core_namespace: "etri6g"
+join_command_file: "/vagrant/ansible/join-command.sh"
+
+master_role_label_key: "node-role.kubernetes.io/control"
+worker1_role_label_key: "node-role.kubernetes.io/centre"
+worker2_role_label_key: "node-role.kubernetes.io/edge"
+
+kubeconfig_path: "/etc/kubernetes/admin.conf"
+generated_manifest_dir: "/tmp/etri-generated"
+
+etri_repo_root: "/vagrant/etriB5gc/etrib5gc-main/etrib5gc-main"
+
+gateway_external_ip: "192.168.56.10"
+gateway_nodeport: 30007
+
+nf_layout:
+  gateway:
+    replicas: 1
+    site: centre
+  nsm:
+    replicas: 1
+    site: centre
+  pran:
+    replicas: 1
+    site: edge
+  controller:
+    replicas: 1
+    site: centre
+
+custom_components:
+  - name: controller
+    image: "b5gc-controller:latest"
+    tar_name: "b5gc-controller.tar"
+    target_nodes:
+      - "k8s-worker1"
+
+  - name: gateway
+    image: "b5gc-gateway:latest"
+    tar_name: "b5gc-gateway.tar"
+    target_nodes:
+      - "k8s-worker1"
+
+  - name: nsm
+    image: "b5gc-nsm:latest"
+    tar_name: "b5gc-nsm.tar"
+    target_nodes:
+      - "k8s-worker1"
+
+  - name: pran
+    image: "b5gc-pran:latest"
+    tar_name: "b5gc-pran.tar"
+    target_nodes:
+      - "k8s-worker2"

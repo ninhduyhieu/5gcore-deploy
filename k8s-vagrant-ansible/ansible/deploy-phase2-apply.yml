@@ -1,0 +1,11 @@
+---
+- name: Apply ETRI 5GC manifests after images are ready
+  hosts: "{{ node_name }}"
+  become: true
+  gather_facts: true
+  vars_files:
+    - /vagrant/ansible/vars.yml
+  roles:
+    - label_nodes
+    - deploy_core
+    - expose_gateway

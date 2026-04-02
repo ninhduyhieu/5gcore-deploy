@@ -1,0 +1,8 @@
+{
+	"registeredAddr": "",
+	"bind":"127.0.0.2",
+	"controller": "192.168.0.9",
+	"labels":{
+		"loc":"daejeon"
+	}
+}

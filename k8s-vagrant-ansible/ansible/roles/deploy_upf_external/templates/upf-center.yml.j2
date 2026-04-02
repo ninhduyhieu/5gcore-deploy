@@ -1,0 +1,19 @@
+version: 1.0.1
+
+description: UPF Center Config
+
+pfcp:
+  addr: {{ upf_center_n4_ip }}
+  nodeID: {{ upf_center_n4_ip }}
+  retransTimeout: 1s
+  maxRetrans: 3
+
+gtpu:
+  forwarder: gtp5g
+  ifList:
+    - addr: {{ upf_center_n3_ip }}
+      type: N3
+
+dnnList:
+  - dnn: internet
+    cidr: 10.61.0.0/16

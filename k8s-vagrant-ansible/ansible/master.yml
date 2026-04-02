@@ -1,0 +1,9 @@
+---
+- name: Initialize Kubernetes master
+  hosts: "{{ node_name }}"
+  become: yes
+  gather_facts: yes
+  vars_files:
+    - /vagrant/ansible/vars.yml
+  roles:
+    - master_init

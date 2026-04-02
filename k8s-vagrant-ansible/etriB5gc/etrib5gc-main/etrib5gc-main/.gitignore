@@ -1,0 +1,6 @@
+/bin/
+/ue-list/
+/run/
+*.sh
+*.swp
+/logs/

@@ -1,0 +1,15 @@
+---
+generated_manifest_dir: /tmp/etri-generated
+
+repo_manifests:
+  controller: "{{ etri_repo_path }}/k8s/seoul/controller.yaml"
+  services: "{{ etri_repo_path }}/k8s/seoul/services.yaml"
+  udr: "{{ etri_repo_path }}/k8s/seoul/udr.yaml"
+  udm: "{{ etri_repo_path }}/k8s/seoul/udm.yaml"
+  ausf: "{{ etri_repo_path }}/k8s/seoul/ausf.yaml"
+  pcf: "{{ etri_repo_path }}/k8s/daejeon/pcf.yaml"
+  damf: "{{ etri_repo_path }}/k8s/daejeon/damf.yaml"
+  smf: "{{ etri_repo_path }}/k8s/daejeon/smf.yaml"
+  amf_10_100: "{{ etri_repo_path }}/k8s/daejeon/amf-10-100.yaml"
+  amf_10_101: "{{ etri_repo_path }}/k8s/daejeon/amf-10-101.yaml"
+  amf_10_102: "{{ etri_repo_path }}/k8s/daejeon/amf-10-102.yaml"

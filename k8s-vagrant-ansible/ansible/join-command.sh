@@ -1,0 +1,1 @@
+kubeadm join 192.168.56.10:6443 --token bcalp9.txeps61bjnyirsrt --discovery-token-ca-cert-hash sha256:f9288eb2a1fdbf655d6173dde9c1fa97e731abee3eefe560eb1d092cc57b7b47  --cri-socket unix:///run/containerd/containerd.sock

@@ -1,0 +1,14 @@
+[Unit]
+Description=UPF Center External
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory={{ upf_repo_path }}
+ExecStart={{ upf_binary_path }} -c {{ upf_center_config }}
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,42 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: apps
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: app-center
+  namespace: apps
+spec:
+  selector:
+    app: app-center
+  ports:
+    - port: 8080
+      targetPort: 5678
+  type: ClusterIP
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: app-center
+  namespace: apps
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: app-center
+  template:
+    metadata:
+      labels:
+        app: app-center
+    spec:
+      nodeSelector:
+        cloud: center
+      containers:
+        - name: app-center
+          image: hashicorp/http-echo:1.0.0
+          args:
+            - "-text=hello-from-center-cloud"
+          ports:
+            - containerPort: 5678
