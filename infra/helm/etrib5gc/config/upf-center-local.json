@@ -1,0 +1,1 @@
+{"pfcp": {"addr": "192.168.56.11", "nodeID": "192.168.56.11"}, "gtpu": {"forwarder": "gtp5g", "ifList": [{"addr": "192.168.56.11", "type": "N3"}]}, "agent": {"registrar": "http://192.168.56.10:30007/register"}}

@@ -1,0 +1,35 @@
+{
+	"plmnId": {
+		"mcc": "208",
+		"mnc": "93"
+	},
+	"slices":[
+		{
+			"sd": "010203",
+			"sst": 1
+		},
+		{
+			"sd": "543210",
+			"sst": 1
+		}
+	],
+	"isAnchor": true,
+	"dnnList":[],
+	"dnaiList": [],
+	"iflist": [
+		{
+			"ip": "192.168.0.9",
+			"mtu": 1400,
+			"name":"tran1"
+		}
+	],
+    "mesh": {
+		"registrar": "192.168.0.6",
+		"bind": ":9002",
+		"agentPort": 7002,
+		"labels": {
+			"plmnId":"208-93",
+			"app": "upf"
+		}
+	}
+}
