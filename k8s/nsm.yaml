@@ -1,0 +1,312 @@
+# === NSM ===
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: nsm-dep
+  namespace: etri6g
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: nsm
+  template:
+    metadata:
+      labels:
+        app: nsm
+        plmnId: 208-93
+    spec:
+      volumes:
+        - name: nsm-config
+          configMap:
+            name: nsm-config
+      containers:
+        - name: nsm
+          image: b5gc-nsm:latest
+          imagePullPolicy: IfNotPresent
+          command: ["./nsm"]
+          args: ["-c", "/etc/config/nsm.json"]
+          volumeMounts:
+            - mountPath: /etc/config
+              name: nsm-config
+          ports:
+            - containerPort: 9001
+            - containerPort: 7001
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: nsm-config
+  namespace: etri6g
+data:
+  nsm.json: |
+    {
+      "plmnId": {
+          "mcc": "001",
+          "mnc": "01"
+      },
+      "plmnPeers": [
+        {
+          "plmnId": {
+                "mcc": "450",
+                "mnc": "05"
+          },
+          "sepps": ["192.168.0.6:7888"],
+          "slices": [
+            {
+              "home": {
+
+                "sd":"000001",
+                "sst":1
+              },
+              "serving":{
+                "sd":"010203",
+                "sst":1
+              },
+              "isLbo": true
+            },
+            {
+              "home": {
+                "sd":"000002",
+                "sst":1
+              },
+              "serving":{
+                "sd":"543210",
+                "sst":1
+              },
+              "isLbo": true
+            }
+          ]
+        }
+      ],
+      "transportNetworks":["tran1","tran2"],
+      "dataNetworks": [
+        {
+          "name": "internet",
+          "cidr": "10.60.0.0/16",
+          "numIpPools": 50,
+          "dns": {
+            "v4": "8.8.8.8"
+          }
+        },
+        {
+          "name": "etri",
+          "cidr": "129.254.195.0/24",
+          "dhcpServer": "129.254.195.100",
+          "dns": {
+            "v4": "8.8.8.8"
+          }
+        },
+        {
+          "name": "ims",
+          "cidr": "10.10.0.0/16",
+          "numIpPools": 50,
+          "pcscf": {
+            "v4": "10.10.0.1"
+          }
+        }
+      ],
+      "slices": [
+        {
+          "id":{
+            "sd":"010203",
+            "sst":1
+          },
+          "dataNetworks":["internet"]
+        },
+        {
+          "id":{
+            "sd":"543210",
+            "sst":1
+          },
+          "dataNetworks":["internet"]
+        }
+      ],
+      "amfSets":[
+        {
+          "setId":"10-100",       
+          "slices": [
+            {
+              "sd":"010203",
+              "sst":1
+            },{
+              "sd":"543210",
+              "sst":1
+            }]
+        },{
+          "setId":"10-101",
+          "slices": [
+            {
+              "sd":"543210",
+              "sst":1
+            }]
+        },{
+          "setId":"10-102",
+          "slices": [
+            {
+              "sd":"543210",
+              "sst":1
+            }]
+        }
+      ],
+      "udr": {
+        "url": "mongodb://udr-mongo:27017",
+          "dbName": "etrib5gc",
+          "authSub": "authsub",
+          "amSub": "amsub",
+          "smfSel": "smfsel",
+          "smSub": "smsub",
+          "mock": false
+      },
+      "suciProfiles":[
+        {
+          "protectionScheme": 1,
+          "privateKey":       "c53c22208b61860b06c62e5406a7b330c2b577aa5558981510d128247d38bd1d",
+          "publicKey":        "5a8d38864820197c3394b92613b20b91633cbd897119273bf8e4a6f4eec0a650"
+        },
+        {
+          "protectionScheme": 2,
+          "privateKey":       "F1AB1074477EBCC7F554EA1C5FC368B1616730155E0041AC447D6301975FECDA",
+          "publicKey":        "0472DA71976234CE833A6907425867B82E074D44EF907DFB4B3E21C1C2256EBCD15A7DED52FCBB097A4ED250E036C7B9C8C7004C4EEDC4F068CD7BF8D3F900E3B4"
+        }
+      ],
+      "mesh": {
+      "registrar": "gateway-svc:7777",
+        "labels": {
+          "plmnId": "001-01",
+          "app": "nsm"
+        }
+      }
+    }
+
+---
+# === SERVICES (Headless Services for NF Discovery) ===
+apiVersion: v1
+kind: Service
+metadata:
+  name: nsm-208-93
+  namespace: etri6g
+  labels:
+    type: network-function
+spec:
+  clusterIP: None
+  selector:
+    app: nsm
+    plmnId: 208-93
+  ports:
+    - protocol: TCP
+      port: 9001
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: udm-208-93
+  namespace: etri6g
+  labels:
+    type: network-function
+spec:
+  clusterIP: None
+  selector:
+    app: udm
+    plmnId: 208-93
+  ports:
+    - protocol: TCP
+      port: 9001
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: pcf-208-93
+  namespace: etri6g
+  labels:
+    type: network-function
+spec:
+  clusterIP: None
+  selector:
+    app: pcf
+    plmnId: 208-93
+  ports:
+    - protocol: TCP
+      port: 9001
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: ausf-208-93
+  namespace: etri6g
+  labels:
+    type: network-function
+spec:
+  clusterIP: None
+  selector:
+    app: ausf
+    plmnId: 208-93
+  ports:
+    - protocol: TCP
+      port: 9001
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: damf-208-93
+  namespace: etri6g
+  labels:
+    type: network-function
+spec:
+  clusterIP: None
+  selector:
+    app: damf
+    plmnId: 208-93
+  ports:
+    - protocol: TCP
+      port: 9001
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: amf-208-93
+  namespace: etri6g
+  labels:
+    type: network-function
+spec:
+  clusterIP: None
+  selector:
+    app: amf
+    plmnId: 208-93
+  ports:
+    - protocol: TCP
+      port: 9001
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: amf-208-93-10-100
+  namespace: etri6g
+  labels:
+    type: network-function
+spec:
+  clusterIP: None
+  selector:
+    app: amf
+    plmnId: 208-93
+    amfSet: 10-100
+  ports:
+    - protocol: TCP
+      port: 9001
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: smf-208-93-1-010203
+  namespace: etri6g
+  labels:
+    type: network-function
+spec:
+  clusterIP: None
+  selector:
+    app: smf
+    plmnId: 208-93
+    slice: 1-010203
+  ports:
+    - protocol: TCP
+      port: 9001
+

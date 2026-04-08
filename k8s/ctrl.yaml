@@ -1,0 +1,186 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ctrl-dep
+  namespace: etri6g
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: controller
+  template:
+    metadata:
+      labels:
+        app: controller
+    spec:
+      volumes:
+        - name: ctrl-config
+          configMap:
+            name: ctrl-config
+      containers:
+        - name: b5gc-ctrl
+          image: b5gc-controller:latest
+          imagePullPolicy: IfNotPresent
+          command: ["./controller"]
+          args: ["-c", "/etc/config/controller.json"]
+          volumeMounts:
+            - mountPath: /etc/config
+              name: ctrl-config
+          ports:
+            - containerPort: 8888
+      serviceAccountName: ctrl-acc
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: ctrl-acc
+  namespace: etri6g
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: get-svc-role
+  namespace: etri6g
+rules:
+  - apiGroups: [""]
+    resources: ["services"]
+    verbs: ["get", "list", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: bind-get-svc-role
+  namespace: etri6g
+subjects:
+  - kind: ServiceAccount
+    name: ctrl-acc
+    namespace: etri6g
+roleRef:
+  kind: Role
+  name: get-svc-role
+  apiGroup: rbac.authorization.k8s.io
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: ctrl-svc
+  namespace: etri6g
+spec:
+  selector:
+    app: controller
+  ports:
+    - protocol: TCP
+      port: 8888
+      nodePort: 30008
+  type: NodePort
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: ctrl-config
+  namespace: etri6g
+data:
+  controller.json: |
+    {
+      "bind":"0.0.0.0",
+      "services":[
+        {
+          "id":"nsm-001-01",
+          "selectors":{
+            "app":"nsm"
+          },
+          "stateful":true
+        },
+        {
+          "id":"damf-001-01",
+          "selectors":{
+            "app":"damf"
+          },
+          "stateful":true
+        },
+        {
+          "id":"udm-001-01",
+          "selectors":{
+            "app":"udm"
+          },
+          "stateful":true
+        },
+        {
+          "id":"ausf-001-01",
+          "selectors":{
+            "app":"ausf"
+          },
+          "stateful":true
+        },
+        {
+          "id":"pcf-001-01",
+          "selectors":{
+            "app":"pcf"
+          },
+          "stateful":true
+        },
+        {
+          "id":"amf-001-01",
+          "selectors":{
+            "app":"amf"
+          },
+          "stateful":true
+        },
+        {
+          "id":"amf-001-01-10-100",
+          "selectors":{
+            "app":"amf",
+            "amfset":"10-100"
+          },
+          "stateful":true
+        },
+        {
+          "id":"amf-001-01-10-101",
+          "selectors":{
+            "app":"amf",
+            "amfset":"10-101"
+          },
+          "stateful":true
+        },
+        {
+          "id":"amf-001-01-10-102",
+          "selectors":{
+            "app":"amf",
+            "amfset":"10-102"
+          },
+          "stateful":true
+        },
+        {
+          "id":"smf-001-01",
+          "selectors":{
+            "app":"smf"
+          },
+          "stateful":true
+        },
+        {
+          "id":"smf-001-01-1-543210",
+          "selectors":{
+            "app":"smf",
+            "slice":"1-543210"
+          },
+          "stateful":true
+        },
+        {
+          "id":"smf-001-01-1-010203",
+          "selectors":{
+            "app":"smf",
+            "slice":"1-010203"
+          },
+          "stateful":true
+        },
+        {
+          "id":"upf-001-01",
+          "selectors":{
+            "app":"upf"
+          },
+          "stateful":true
+        }
+      ],
+      "groupings":[],
+      "routings":[]
+    }

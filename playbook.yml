@@ -1,0 +1,31 @@
+---
+- name: Update and configure all nodes
+  hosts: all
+  become: true
+  roles:
+    - common
+
+- name: Install Docker on all nodes
+  hosts: all
+  become: true
+  roles:
+    - docker_install
+
+- name: Install K3s server (master)
+  hosts: masters
+  become: true
+  roles:
+    - k3s_install
+    - k3s_kubeconfig
+
+- name: Install K3s agents (workers)
+  hosts: workers
+  become: true
+  roles:
+    - k3s_agent
+
+- name: Install Calico CNI on master
+  hosts: masters
+  become: true
+  roles:
+    - k3s_calico

@@ -1,0 +1,15 @@
+---
+- name: Wait for the token file to exist
+  wait_for:
+    path: /var/lib/rancher/k3s/server/node-token
+    state: present
+    timeout: 300
+
+- name: Read K3s node-token
+  slurp:
+    src: /var/lib/rancher/k3s/server/node-token
+  register: token_raw
+
+- name: Set fact with K3s token
+  set_fact:
+    k3s_token: "{{ token_raw['content'] | b64decode | trim }}"
