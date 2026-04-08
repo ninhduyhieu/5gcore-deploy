@@ -9,6 +9,14 @@ Automated deployment of a K3s Kubernetes cluster for 5G Core using Vagrant and A
 | k3s-agent-1 | 192.168.58.12 | 4 | 2GB |
 | k3s-agent-2 | 192.168.58.13 | 4 | 2GB |
 
+### NOTE: use this [box](https://drive.google.com/file/d/1z-JIrnqV2uSxIK9hmDth7D8YGC0TYqsi/view?usp=sharing) to boot vms
+```bash
+vagrant box add ubuntu2204 ubuntu2204.box
+
+# then boot
+vagrant up
+```
+
 ### Ansible [Roles](./roles/) (in playbook order)
 - `common` - apt update, base packages, hosts file
 - `docker_install` - Docker runtime
@@ -30,10 +38,8 @@ direnv allow  # Activates Nix flake with Ansible, kubectl, k9s
 
 ### NOTE: to use kubectl, have to set env `export KUBECONFIG="$PWD/kubeconfig"`
 
-## Run
-
+## Apply Ansible to create cluster
 ```
-vagrant up
 ansible-playbook -i inventory/hosts.yaml playbook.yml
 ```
 
