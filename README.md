@@ -28,6 +28,8 @@ Automated deployment of a K3s Kubernetes cluster for 5G Core using Vagrant and A
 direnv allow  # Activates Nix flake with Ansible, kubectl, k9s
 ```
 
+### NOTE: to use kubectl, have to set env `export KUBECONFIG="$PWD/kubeconfig"`
+
 ## Run
 
 ```
