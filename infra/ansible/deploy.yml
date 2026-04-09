@@ -1,0 +1,54 @@
+---
+- name: Common setup on all nodes
+  hosts: cluster
+  become: yes
+  vars:
+    k3s_token: "b5gc-k3s-cluster-token"
+  roles:
+    - common
+
+- name: Install k3s server on master
+  hosts: master
+  become: yes
+  vars:
+    k3s_token: "b5gc-k3s-cluster-token"
+    fetch_kubeconfig: true
+  roles:
+    - k3s-server
+
+- name: Install k3s agents on workers
+  hosts: workers
+  become: yes
+  serial: 1
+  roles:
+    - k3s-agent
+
+- name: Configure node labels
+  hosts: master
+  become: yes
+  roles:
+    - k3s-config
+
+- name: Build and import container images
+  hosts: master
+  become: yes
+  roles:
+    - container-images
+
+- name: Install gtp5g on UPF nodes
+  hosts: upf_nodes
+  become: yes
+  roles:
+    - gtp5g
+
+- name: Deploy UPF as external service
+  hosts: upf_nodes
+  become: yes
+  roles:
+    - upf-external
+
+- name: Install Argo CD and deploy ETRI B5GC
+  hosts: master
+  become: yes
+  roles:
+    - argocd

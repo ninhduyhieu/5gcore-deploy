@@ -1,0 +1,59 @@
+- name: Create UPF config directory
+  file:
+    path: "{{ upf_config_dir }}"
+    state: directory
+    mode: "0755"
+
+- name: Deploy UPF config
+  template:
+    src: upf.json.j2
+    dest: "{{ upf_config_dir }}/upf.json"
+    mode: "0644"
+  vars:
+    plmn_mcc: "001"
+    plmn_mnc: "01"
+
+- name: Copy UPF binary
+  copy:
+    src: "{{ upf_binary }}"
+    dest: /usr/local/bin/b5gc-upf
+    mode: "0755"
+
+- name: Create UPF systemd service
+  copy:
+    dest: /etc/systemd/system/{{ upf_service_name }}.service
+    content: |
+      [Unit]
+      Description=ETRI B5GC UPF
+      After=network-online.target
+      Wants=network-online.target
+
+      [Service]
+      Type=simple
+      ExecStart=/usr/local/bin/b5gc-upf -c {{ upf_config_dir }}/upf.json
+      Restart=on-failure
+      RestartSec=5
+      LimitNOFILE=65536
+
+      [Install]
+      WantedBy=multi-user.target
+  register: upf_service
+
+- name: Reload systemd
+  systemd:
+    daemon_reload: yes
+  when: upf_service.changed
+
+- name: Enable and start UPF service
+  systemd:
+    name: "{{ upf_service_name }}"
+    state: started
+    enabled: yes
+
+- name: Wait for UPF to be running
+  shell: systemctl is-active {{ upf_service_name }}
+  register: upf_status
+  retries: 10
+  delay: 3
+  until: upf_status.stdout == "active"
+  changed_when: false

@@ -1,0 +1,36 @@
+---
+- name: Detect correct node IP
+  shell: |
+    ip addr show | grep 'inet 192.168.56.' | awk '{print $2}' | cut -d'/' -f1
+  register: node_ip_detected
+  changed_when: false
+
+- name: Fail if no 192.168.56.x IP found
+  fail:
+    msg: "Không tìm thấy IP 192.168.56.x trên node này"
+  when: node_ip_detected.stdout | trim == ""
+
+- name: Patch kubeadm-flags.env with correct node-ip
+  lineinfile:
+    path: /var/lib/kubelet/kubeadm-flags.env
+    regexp: '^KUBELET_KUBEADM_ARGS='
+    line: 'KUBELET_KUBEADM_ARGS="--node-ip={{ node_ip_detected.stdout | trim }} --container-runtime-endpoint=unix:///run/containerd/containerd.sock --pod-infra-container-image=registry.k8s.io/pause:3.9"'
+  register: kubelet_flag_changed
+
+- name: Restart kubelet if flags changed
+  systemd:
+    name: kubelet
+    state: restarted
+    daemon_reload: yes
+  when: kubelet_flag_changed.changed
+
+- name: Wait for node Ready on master
+  shell: |
+    kubectl --kubeconfig=/etc/kubernetes/admin.conf get node $(hostname) \
+      -o jsonpath='{.status.conditions[?(@.type=="Ready")].status}'
+  register: node_ready
+  retries: 20
+  delay: 5
+  until: node_ready.stdout == "True"
+  changed_when: false
+  when: "'master' in group_names"

@@ -1,0 +1,30 @@
+{
+  "plmnId": {
+    "mcc": "208",
+    "mnc": "93"
+  },
+  "slices": [
+    {
+      "sd": "010203",
+      "sst": 1
+    }
+  ],
+  "isAnchor": true,
+  "dnnList": [],
+  "dnaiList": [],
+  "iflist": [
+    {
+      "ip": "{{ upf_center_n3_ip }}",
+      "mtu": 1400,
+      "name": "tran1"
+    }
+  ],
+  "mesh": {
+    "registrar": "{{ gateway_external_ip }}:{{ gateway_nodeport }}",
+    "bind": "{{ upf_center_n4_ip }}",
+    "labels": {
+      "plmnId": "208-93",
+      "app": "upf"
+    }
+  }
+}

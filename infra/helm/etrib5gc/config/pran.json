@@ -1,0 +1,23 @@
+{
+	"nfSelection": {
+		"gnb-loc":"daejeon"
+	},
+	"nasSplit": false,
+	"transportNetworks": ["tran1"],
+	"plmnId": {
+		"mcc": "001",
+		"mnc": "01"
+	},
+	"amfRegion": 10,
+	"mesh": {
+		"registrar": "127.0.0.2",
+		"bind": "127.0.0.8",
+		"labels": {
+			"plmnId":"001-01",
+			"tac": "001",
+			"app": "pran"
+		}
+	},
+	"ngapBinds":["192.168.0.9"],
+	"ngapPort": 38412
+}

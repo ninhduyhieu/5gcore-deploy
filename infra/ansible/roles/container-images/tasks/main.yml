@@ -1,0 +1,38 @@
+- name: Create artifacts directory
+  file:
+    path: /vagrant/artifacts
+    state: directory
+  delegate_to: k3s-server
+
+- name: Build Docker images for all NFs
+  shell: |
+    cd /vagrant
+    bash scripts/build-images.sh {{ item }}
+  delegate_to: k3s-server
+  loop: "{{ nf_binaries }}"
+  register: build_result
+
+- name: Create images export directory
+  file:
+    path: /vagrant/artifacts
+    state: directory
+  delegate_to: k3s-server
+
+- name: Export Docker images to tar
+  shell: docker save b5gc-{{ item }}:latest -o /vagrant/artifacts/b5gc-{{ item }}.tar
+  delegate_to: k3s-server
+  loop: "{{ nf_binaries }}"
+
+- name: Import images into k3s containerd on all nodes
+  shell: k3s ctr images import /vagrant/artifacts/b5gc-{{ item }}.tar
+  loop: "{{ nf_binaries }}"
+  register: import_result
+
+- name: Verify images imported
+  shell: k3s ctr images ls | grep b5gc
+  register: images_list
+  changed_when: false
+
+- name: Show imported images
+  debug:
+    msg: "{{ images_list.stdout_lines }}"

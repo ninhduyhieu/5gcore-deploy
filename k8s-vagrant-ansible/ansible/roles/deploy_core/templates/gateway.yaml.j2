@@ -1,0 +1,107 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: gateway-dep
+  namespace: {{ core_namespace }}
+spec:
+  strategy:
+    type: Recreate
+  replicas: {{ nf_layout.gateway.replicas }}
+  selector:
+    matchLabels:
+      app: gateway
+      region: daejeon
+  template:
+    metadata:
+      labels:
+        app: gateway
+        region: daejeon
+    spec:
+      nodeSelector:
+        site: {{ nf_layout.gateway.site }}
+      serviceAccountName: gw-acc
+      volumes:
+        - name: gateway-config
+          configMap:
+            name: gateway-config
+      containers:
+        - name: b5gc-gateway
+          image: b5gc-gateway:latest
+          imagePullPolicy: IfNotPresent
+          command: ["./gateway"]
+          args: ["-c", "/etc/config/gateway.json"]
+          volumeMounts:
+            - mountPath: /etc/config
+              name: gateway-config
+          ports:
+            - containerPort: 7777
+          env:
+            - name: POD_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+            - name: POD_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: gw-acc
+  namespace: {{ core_namespace }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: get-pods-role
+  namespace: {{ core_namespace }}
+rules:
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["get"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: bind-get-pods-role
+  namespace: {{ core_namespace }}
+subjects:
+  - kind: ServiceAccount
+    name: gw-acc
+    namespace: {{ core_namespace }}
+roleRef:
+  kind: Role
+  name: get-pods-role
+  apiGroup: rbac.authorization.k8s.io
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: gateway-config
+  namespace: {{ core_namespace }}
+data:
+  gateway.json: |
+    {
+      "registeredAddr": "gateway-svc:7777",
+      "controller": "10.100.100.20",
+      "labels":{
+        "loc":"{{ nf_layout.gateway.site }}"
+      }
+    }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: gateway-svc
+  namespace: {{ core_namespace }}
+spec:
+  selector:
+    app: gateway
+  ports:
+    - protocol: TCP
+      port: 7777
+      targetPort: 7777
+      nodePort: {{ gateway_nodeport }}
+  type: NodePort
+  

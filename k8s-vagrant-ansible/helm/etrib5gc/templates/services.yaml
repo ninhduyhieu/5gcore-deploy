@@ -1,0 +1,276 @@
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: ctrl-svc
+  namespace: {{ .Values.global.namespace }}
+spec:
+  selector:
+    app: controller
+  ports:
+    - protocol: TCP
+      port: {{ .Values.global.controller.port }}
+      targetPort: {{ .Values.global.controller.port }}
+      nodePort: {{ .Values.global.controller.nodePort }}
+  type: NodePort
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: gateway-svc
+  namespace: {{ .Values.global.namespace }}
+spec:
+  selector:
+    app: gateway
+  ports:
+    - protocol: TCP
+      port: {{ .Values.global.gateway.port }}
+      targetPort: {{ .Values.global.gateway.port }}
+      nodePort: {{ .Values.global.gateway.nodePort }}
+  type: NodePort
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: pran-sbi
+  namespace: {{ .Values.global.namespace }}
+spec:
+  selector:
+    app: pran
+    plmnId: {{ .Values.global.plmn.label | quote }}
+  ports:
+    - name: sbi
+      port: {{ .Values.global.pran.sbiPort }}
+      targetPort: {{ .Values.global.pran.sbiPort }}
+      protocol: TCP
+  type: ClusterIP
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: pran-ngap
+  namespace: {{ .Values.global.namespace }}
+spec:
+  selector:
+    app: pran
+    plmnId: {{ .Values.global.plmn.label | quote }}
+  ports:
+    - name: ngap
+      port: {{ .Values.global.pran.ngapPort }}
+      targetPort: {{ .Values.global.pran.ngapPort }}
+      nodePort: {{ .Values.global.pran.nodePort }}
+      protocol: SCTP
+  type: NodePort
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: udr-mongo
+  namespace: {{ .Values.global.namespace }}
+  labels:
+    app: udr
+spec:
+  ports:
+    - name: mongodb
+      protocol: TCP
+      port: {{ .Values.global.udr.port }}
+      targetPort: {{ .Values.global.udr.port }}
+      nodePort: {{ .Values.global.udr.nodePort }}
+  type: NodePort
+  selector:
+    app: udr
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: nsm-208-93
+  namespace: {{ .Values.global.namespace }}
+  labels:
+    type: network-function
+spec:
+  clusterIP: None
+  selector:
+    app: nsm
+    plmnId: {{ .Values.global.plmn.label | quote }}
+  ports:
+    - protocol: TCP
+      port: 9001
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: udm-208-93
+  namespace: {{ .Values.global.namespace }}
+  labels:
+    type: network-function
+spec:
+  clusterIP: None
+  selector:
+    app: udm
+    plmnId: {{ .Values.global.plmn.label | quote }}
+  ports:
+    - protocol: TCP
+      port: 9001
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: pcf-208-93
+  namespace: {{ .Values.global.namespace }}
+  labels:
+    type: network-function
+spec:
+  clusterIP: None
+  selector:
+    app: pcf
+    plmnId: {{ .Values.global.plmn.label | quote }}
+  ports:
+    - protocol: TCP
+      port: 9001
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: ausf-208-93
+  namespace: {{ .Values.global.namespace }}
+  labels:
+    type: network-function
+spec:
+  clusterIP: None
+  selector:
+    app: ausf
+    plmnId: {{ .Values.global.plmn.label | quote }}
+  ports:
+    - protocol: TCP
+      port: 9001
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: damf-208-93
+  namespace: {{ .Values.global.namespace }}
+  labels:
+    type: network-function
+spec:
+  clusterIP: None
+  selector:
+    app: damf
+    plmnId: {{ .Values.global.plmn.label | quote }}
+  ports:
+    - protocol: TCP
+      port: 9001
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: amf-208-93
+  namespace: {{ .Values.global.namespace }}
+  labels:
+    type: network-function
+spec:
+  clusterIP: None
+  selector:
+    app: amf
+    plmnId: {{ .Values.global.plmn.label | quote }}
+  ports:
+    - protocol: TCP
+      port: 9001
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: amf-208-93-10-100
+  namespace: {{ .Values.global.namespace }}
+  labels:
+    type: network-function
+spec:
+  clusterIP: None
+  selector:
+    app: amf
+    plmnId: {{ .Values.global.plmn.label | quote }}
+    amfSet: "10-100"
+  ports:
+    - protocol: TCP
+      port: 9001
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: amf-208-93-10-101
+  namespace: {{ .Values.global.namespace }}
+  labels:
+    type: network-function
+spec:
+  clusterIP: None
+  selector:
+    app: amf
+    plmnId: {{ .Values.global.plmn.label | quote }}
+    amfSet: "10-101"
+  ports:
+    - protocol: TCP
+      port: 9001
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: amf-208-93-10-102
+  namespace: {{ .Values.global.namespace }}
+  labels:
+    type: network-function
+spec:
+  clusterIP: None
+  selector:
+    app: amf
+    plmnId: {{ .Values.global.plmn.label | quote }}
+    amfSet: "10-102"
+  ports:
+    - protocol: TCP
+      port: 9001
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: smf-208-93-1-010203
+  namespace: {{ .Values.global.namespace }}
+  labels:
+    type: network-function
+spec:
+  clusterIP: None
+  selector:
+    app: smf
+    plmnId: {{ .Values.global.plmn.label | quote }}
+    slice: "1-010203"
+  ports:
+    - protocol: TCP
+      port: 9001
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: upf-208-93
+  namespace: {{ .Values.global.namespace }}
+  labels:
+    type: network-function
+spec:
+  clusterIP: None
+  selector:
+    app: upf
+    plmnId: {{ .Values.global.plmn.label | quote }}
+  ports:
+    - protocol: TCP
+      port: 9001

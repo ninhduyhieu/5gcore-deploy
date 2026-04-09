@@ -1,0 +1,519 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ctrl-dep
+  namespace: {{ .Values.global.namespace }}
+spec:
+  replicas: {{ .Values.layout.controller.replicas }}
+  selector:
+    matchLabels:
+      app: controller
+  template:
+    metadata:
+      labels:
+        app: controller
+    spec:
+      serviceAccountName: ctrl-acc
+      nodeSelector:
+        site: {{ .Values.layout.controller.site }}
+      volumes:
+        - name: ctrl-config
+          configMap:
+            name: ctrl-config
+      containers:
+        - name: b5gc-ctrl
+          image: {{ include "etrib5gc.image" (dict "Values" .Values "image" "b5gc-controller") }}
+          imagePullPolicy: {{ .Values.global.imagePullPolicy }}
+          command: ["./controller"]
+          args: ["-c", "/etc/config/controller.json"]
+          volumeMounts:
+            - mountPath: /etc/config
+              name: ctrl-config
+          ports:
+            - containerPort: 8888
+          env:
+            - name: POD_NAME
+              valueFrom: { fieldRef: { fieldPath: metadata.name } }
+            - name: POD_NAMESPACE
+              valueFrom: { fieldRef: { fieldPath: metadata.namespace } }
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: gateway-dep
+  namespace: {{ .Values.global.namespace }}
+spec:
+  strategy: { type: Recreate }
+  replicas: {{ .Values.layout.gateway.replicas }}
+  selector:
+    matchLabels:
+      app: gateway
+      region: daejeon
+  template:
+    metadata:
+      labels:
+        app: gateway
+        region: daejeon
+    spec:
+      nodeSelector:
+        site: {{ .Values.layout.gateway.site }}
+      serviceAccountName: gw-acc
+      volumes:
+        - name: gateway-config
+          configMap:
+            name: gateway-config
+      containers:
+        - name: b5gc-gateway
+          image: {{ include "etrib5gc.image" (dict "Values" .Values "image" "b5gc-gateway") }}
+          imagePullPolicy: {{ .Values.global.imagePullPolicy }}
+          command: ["./gateway"]
+          args: ["-c", "/etc/config/gateway.json"]
+          volumeMounts:
+            - mountPath: /etc/config
+              name: gateway-config
+          ports:
+            - containerPort: 7777
+          env:
+            - name: POD_NAME
+              valueFrom: { fieldRef: { fieldPath: metadata.name } }
+            - name: POD_NAMESPACE
+              valueFrom: { fieldRef: { fieldPath: metadata.namespace } }
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: nsm-dep
+  namespace: {{ .Values.global.namespace }}
+spec:
+  replicas: {{ .Values.layout.nsm.replicas }}
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: nsm
+  template:
+    metadata:
+      labels:
+        app: nsm
+        plmnId: {{ .Values.global.plmn.label | quote }}
+    spec:
+      nodeSelector:
+        site: {{ .Values.layout.nsm.site }}
+      volumes:
+        - name: nsm-config
+          configMap:
+            name: nsm-config
+      containers:
+        - name: nsm
+          image: {{ include "etrib5gc.image" (dict "Values" .Values "image" "b5gc-nsm") }}
+          imagePullPolicy: {{ .Values.global.imagePullPolicy }}
+          command: ["./nsm"]
+          args: ["-c", "/etc/config/nsm.json"]
+          env:
+            - name: POD_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+            - name: POD_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
+          volumeMounts:
+            - mountPath: /etc/config
+              name: nsm-config
+          ports:
+            - containerPort: 9001
+            - containerPort: 7001
+          readinessProbe:
+            tcpSocket:
+              port: 9001
+            initialDelaySeconds: 20
+            periodSeconds: 10
+            failureThreshold: 12
+          livenessProbe:
+            tcpSocket:
+              port: 9001
+            initialDelaySeconds: 60
+            periodSeconds: 15
+            failureThreshold: 10
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: mongo-db
+  namespace: {{ .Values.global.namespace }}
+spec:
+  selector:
+    matchLabels:
+      app: udr
+  replicas: {{ .Values.layout.udr.replicas }}
+  strategy:
+    type: RollingUpdate
+    rollingUpdate: { maxSurge: 1, maxUnavailable: 1 }
+  minReadySeconds: 5
+  template:
+    metadata:
+      labels:
+        app: udr
+    spec:
+      nodeSelector:
+        site: {{ .Values.layout.udr.site }}
+      containers:
+        - name: mongo-db
+          image: {{ .Values.global.imageRegistry }}/mongo:latest
+          imagePullPolicy: {{ .Values.global.imagePullPolicy }}
+          ports:
+            - containerPort: 27017
+              name: mongodb
+          volumeMounts:
+            - name: mongodb-persistent-storage
+              mountPath: /data/db
+      volumes:
+        - name: mongodb-persistent-storage
+          persistentVolumeClaim:
+            claimName: mongodb-pvc
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: udm-dep
+  namespace: {{ .Values.global.namespace }}
+spec:
+  replicas: {{ .Values.layout.udm.replicas }}
+  selector:
+    matchLabels:
+      app: udm
+  template:
+    metadata:
+      labels:
+        app: udm
+        plmnId: {{ .Values.global.plmn.label | quote }}
+    spec:
+      nodeSelector:
+        site: {{ .Values.layout.udm.site }}
+      volumes:
+        - name: udm-config
+          configMap: { name: udm-config }
+      containers:
+        - name: udm
+          image: {{ include "etrib5gc.image" (dict "Values" .Values "image" "b5gc-udm") }}
+          imagePullPolicy: {{ .Values.global.imagePullPolicy }}
+          command: ["./udm"]
+          args: ["-c", "/etc/config/udm.json"]
+          volumeMounts:
+            - mountPath: /etc/config
+              name: udm-config
+          ports: [{containerPort: 9001}, {containerPort: 7001}]
+          env:
+            - name: POD_NAME
+              valueFrom: { fieldRef: { fieldPath: metadata.name } }
+            - name: POD_NAMESPACE
+              valueFrom: { fieldRef: { fieldPath: metadata.namespace } }
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ausf-dep
+  namespace: {{ .Values.global.namespace }}
+spec:
+  replicas: {{ .Values.layout.ausf.replicas }}
+  selector:
+    matchLabels:
+      app: ausf
+  template:
+    metadata:
+      labels:
+        app: ausf
+        plmnId: {{ .Values.global.plmn.label | quote }}
+    spec:
+      nodeSelector:
+        site: {{ .Values.layout.ausf.site }}
+      volumes:
+        - name: ausf-config
+          configMap: { name: ausf-config }
+      containers:
+        - name: ausf
+          image: {{ include "etrib5gc.image" (dict "Values" .Values "image" "b5gc-ausf") }}
+          imagePullPolicy: {{ .Values.global.imagePullPolicy }}
+          command: ["./ausf"]
+          args: ["-c", "/etc/config/ausf.json"]
+          volumeMounts:
+            - mountPath: /etc/config
+              name: ausf-config
+          ports: [{containerPort: 9001}, {containerPort: 7001}]
+          env:
+            - name: POD_NAME
+              valueFrom: { fieldRef: { fieldPath: metadata.name } }
+            - name: POD_NAMESPACE
+              valueFrom: { fieldRef: { fieldPath: metadata.namespace } }
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: pcf-dep
+  namespace: {{ .Values.global.namespace }}
+spec:
+  replicas: {{ .Values.layout.pcf.replicas }}
+  selector:
+    matchLabels:
+      app: pcf
+  template:
+    metadata:
+      labels:
+        app: pcf
+        plmnId: {{ .Values.global.plmn.label | quote }}
+    spec:
+      nodeSelector:
+        site: {{ .Values.layout.pcf.site }}
+      volumes:
+        - name: pcf-config
+          configMap: { name: pcf-config }
+      containers:
+        - name: pcf
+          image: {{ include "etrib5gc.image" (dict "Values" .Values "image" "b5gc-pcf") }}
+          imagePullPolicy: {{ .Values.global.imagePullPolicy }}
+          command: ["./pcf"]
+          args: ["-c", "/etc/config/pcf.json"]
+          volumeMounts:
+            - mountPath: /etc/config
+              name: pcf-config
+          ports: [{containerPort: 9001}, {containerPort: 7001}]
+          env:
+            - name: POD_NAME
+              valueFrom: { fieldRef: { fieldPath: metadata.name } }
+            - name: POD_NAMESPACE
+              valueFrom: { fieldRef: { fieldPath: metadata.namespace } }
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: damf-dep
+  namespace: {{ .Values.global.namespace }}
+spec:
+  replicas: {{ .Values.layout.damf.replicas }}
+  selector:
+    matchLabels:
+      app: damf
+  template:
+    metadata:
+      labels:
+        app: damf
+        plmnId: {{ .Values.global.plmn.label | quote }}
+    spec:
+      nodeSelector:
+        site: {{ .Values.layout.damf.site }}
+      volumes:
+        - name: damf-config
+          configMap: { name: damf-config }
+      containers:
+        - name: damf
+          image: {{ include "etrib5gc.image" (dict "Values" .Values "image" "b5gc-damf") }}
+          imagePullPolicy: {{ .Values.global.imagePullPolicy }}
+          command: ["./damf"]
+          args: ["-c", "/etc/config/damf.json"]
+          volumeMounts:
+            - mountPath: /etc/config
+              name: damf-config
+          ports: [{containerPort: 9001}, {containerPort: 7001}]
+          env:
+            - name: POD_NAME
+              valueFrom: { fieldRef: { fieldPath: metadata.name } }
+            - name: POD_NAMESPACE
+              valueFrom: { fieldRef: { fieldPath: metadata.namespace } }
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: smf-slice1-dep
+  namespace: {{ .Values.global.namespace }}
+spec:
+  replicas: {{ .Values.layout.smf.replicas }}
+  selector:
+    matchLabels:
+      app: smf
+      slice: 1-010203
+  template:
+    metadata:
+      labels:
+        app: smf
+        plmnId: {{ .Values.global.plmn.label | quote }}
+        slice: 1-010203
+    spec:
+      nodeSelector:
+        site: {{ .Values.layout.smf.site }}
+      volumes:
+        - name: smf-config
+          configMap: { name: smf-slice1-config }
+      containers:
+        - name: smf
+          image: {{ include "etrib5gc.image" (dict "Values" .Values "image" "b5gc-smf") }}
+          imagePullPolicy: {{ .Values.global.imagePullPolicy }}
+          command: ["./smf"]
+          args: ["-c", "/etc/config/smf.json"]
+          volumeMounts:
+            - mountPath: /etc/config
+              name: smf-config
+          ports: [{containerPort: 9001}, {containerPort: 7001}]
+          env:
+            - name: POD_NAME
+              valueFrom: { fieldRef: { fieldPath: metadata.name } }
+            - name: POD_NAMESPACE
+              valueFrom: { fieldRef: { fieldPath: metadata.namespace } }
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: amf-10-100-dep
+  namespace: {{ .Values.global.namespace }}
+spec:
+  replicas: {{ .Values.layout.amf_10_100.replicas }}
+  selector:
+    matchLabels:
+      app: amf
+      amfSet: 10-100
+  template:
+    metadata:
+      labels:
+        app: amf
+        amfSet: 10-100
+        plmnId: {{ .Values.global.plmn.label | quote }}
+    spec:
+      nodeSelector:
+        site: {{ .Values.layout.amf_10_100.site }}
+      volumes:
+        - name: amf-config
+          configMap: { name: amf-10-100-config }
+      containers:
+        - name: amf
+          image: {{ include "etrib5gc.image" (dict "Values" .Values "image" "b5gc-amf") }}
+          imagePullPolicy: {{ .Values.global.imagePullPolicy }}
+          command: ["./amf"]
+          args: ["-c", "/etc/config/amf.json"]
+          volumeMounts:
+            - mountPath: /etc/config
+              name: amf-config
+          ports: [{containerPort: 9001}, {containerPort: 7001}]
+          env:
+            - name: POD_NAME
+              valueFrom: { fieldRef: { fieldPath: metadata.name } }
+            - name: POD_NAMESPACE
+              valueFrom: { fieldRef: { fieldPath: metadata.namespace } }
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: amf-10-101-dep
+  namespace: {{ .Values.global.namespace }}
+spec:
+  replicas: {{ .Values.layout.amf_10_101.replicas }}
+  selector:
+    matchLabels:
+      app: amf
+      amfSet: 10-101
+  template:
+    metadata:
+      labels:
+        app: amf
+        amfSet: 10-101
+        plmnId: {{ .Values.global.plmn.label | quote }}
+    spec:
+      nodeSelector:
+        site: {{ .Values.layout.amf_10_101.site }}
+      volumes:
+        - name: amf-config
+          configMap: { name: amf-10-101-config }
+      containers:
+        - name: amf
+          image: {{ include "etrib5gc.image" (dict "Values" .Values "image" "b5gc-amf") }}
+          imagePullPolicy: {{ .Values.global.imagePullPolicy }}
+          command: ["./amf"]
+          args: ["-c", "/etc/config/amf.json"]
+          volumeMounts:
+            - mountPath: /etc/config
+              name: amf-config
+          ports: [{containerPort: 9001}, {containerPort: 7001}]
+          env:
+            - name: POD_NAME
+              valueFrom: { fieldRef: { fieldPath: metadata.name } }
+            - name: POD_NAMESPACE
+              valueFrom: { fieldRef: { fieldPath: metadata.namespace } }
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: amf-10-102-dep
+  namespace: {{ .Values.global.namespace }}
+spec:
+  replicas: {{ .Values.layout.amf_10_102.replicas }}
+  selector:
+    matchLabels:
+      app: amf
+      amfSet: 10-102
+  template:
+    metadata:
+      labels:
+        app: amf
+        amfSet: 10-102
+        plmnId: {{ .Values.global.plmn.label | quote }}
+    spec:
+      nodeSelector:
+        site: {{ .Values.layout.amf_10_102.site }}
+      volumes:
+        - name: amf-config
+          configMap: { name: amf-10-102-config }
+      containers:
+        - name: amf
+          image: {{ include "etrib5gc.image" (dict "Values" .Values "image" "b5gc-amf") }}
+          imagePullPolicy: {{ .Values.global.imagePullPolicy }}
+          command: ["./amf"]
+          args: ["-c", "/etc/config/amf.json"]
+          volumeMounts:
+            - mountPath: /etc/config
+              name: amf-config
+          ports: [{containerPort: 9001}, {containerPort: 7001}]
+          env:
+            - name: POD_NAME
+              valueFrom: { fieldRef: { fieldPath: metadata.name } }
+            - name: POD_NAMESPACE
+              valueFrom: { fieldRef: { fieldPath: metadata.namespace } }
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: pran-dep
+  namespace: {{ .Values.global.namespace }}
+spec:
+  strategy: { type: Recreate }
+  replicas: {{ .Values.layout.pran.replicas }}
+  selector:
+    matchLabels:
+      app: pran
+  template:
+    metadata:
+      labels:
+        app: pran
+        plmnId: {{ .Values.global.plmn.label | quote }}
+    spec:
+      nodeSelector:
+        site: {{ .Values.layout.pran.site }}
+      volumes:
+        - name: pran-config
+          configMap: { name: pran-config }
+      containers:
+        - name: pran
+          image: {{ include "etrib5gc.image" (dict "Values" .Values "image" "b5gc-pran") }}
+          imagePullPolicy: {{ .Values.global.imagePullPolicy }}
+          command: ["./pran"]
+          args: ["-c", "/etc/config/pran.json"]
+          volumeMounts:
+            - mountPath: /etc/config
+              name: pran-config
+          ports:
+            - { containerPort: 9001, protocol: TCP }
+            - { containerPort: 7001, protocol: TCP }
+            - { containerPort: 38412, protocol: SCTP }
+          env:
+            - name: POD_NAME
+              valueFrom: { fieldRef: { fieldPath: metadata.name } }
+            - name: POD_NAMESPACE
+              valueFrom: { fieldRef: { fieldPath: metadata.namespace } }

@@ -1,0 +1,81 @@
+{{- $root := . }}
+{{- range $amfSet := .Values.amfSets }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: amf-{{ $amfSet.setId }}-dep
+  namespace: {{ $root.Values.global.namespace }}
+  labels:
+    app: amf
+    amfset: {{ $amfSet.setId }}
+    plmnId: {{ $root.Values.global.plmnIdLabel }}
+    {{- include "etrib5gc.labels" $root | nindent 4 }}
+  annotations:
+    argocd.argoproj.io/sync-wave: {{ $root.Values.global.syncWave.amfPran | quote }}
+spec:
+  replicas: {{ $amfSet.replicas }}
+  selector:
+    matchLabels:
+      app: amf
+      amfset: {{ $amfSet.setId }}
+      plmnId: {{ $root.Values.global.plmnIdLabel }}
+  template:
+    metadata:
+      labels:
+        app: amf
+        amfset: {{ $amfSet.setId }}
+        plmnId: {{ $root.Values.global.plmnIdLabel }}
+    spec:
+      {{- if $amfSet.nodeSelector }}
+      nodeSelector:
+        {{- toYaml $amfSet.nodeSelector | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: amf
+          image: {{ $amfSet.image }}:latest
+          imagePullPolicy: {{ $root.Values.global.imagePullPolicy }}
+          command: {{ toJson $amfSet.command }}
+          args: {{ toJson $amfSet.args }}
+          env:
+            - name: POD_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+            - name: POD_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
+          volumeMounts:
+            - name: config-volume
+              mountPath: /etc/config
+      volumes:
+        - name: config-volume
+          configMap:
+            name: amf-{{ $amfSet.setId }}-config
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: amf-{{ $root.Values.global.plmnIdLabel }}-{{ $amfSet.setId }}-svc
+  namespace: {{ $root.Values.global.namespace }}
+  labels:
+    app: amf
+    amfset: {{ $amfSet.setId }}
+    plmnId: {{ $root.Values.global.plmnIdLabel }}
+  annotations:
+    argocd.argoproj.io/sync-wave: {{ $root.Values.global.syncWave.amfPran | quote }}
+spec:
+  {{- if $amfSet.service.clusterIP }}
+  clusterIP: {{ $amfSet.service.clusterIP }}
+  {{- end }}
+  type: {{ $amfSet.service.type }}
+  selector:
+    app: amf
+    amfset: {{ $amfSet.setId }}
+    plmnId: {{ $root.Values.global.plmnIdLabel }}
+  ports:
+    - port: {{ $amfSet.service.port }}
+      targetPort: {{ $amfSet.service.port }}
+      protocol: TCP
+{{- end }}

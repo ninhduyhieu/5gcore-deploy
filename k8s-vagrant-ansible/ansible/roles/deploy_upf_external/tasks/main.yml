@@ -1,0 +1,23 @@
+- name: Wait for gateway
+  wait_for:
+    host: "{{ gateway_external_ip }}"
+    port: "{{ gateway_nodeport }}"
+    timeout: 300
+
+- name: Reload systemd
+  systemd:
+    daemon_reload: yes
+
+- name: Start center UPF
+  systemd:
+    name: upf-center
+    state: restarted
+    enabled: yes
+  when: node_role == "worker-center"
+
+- name: Start edge UPF
+  systemd:
+    name: upf-edge
+    state: restarted
+    enabled: yes
+  when: node_role == "worker-edge"

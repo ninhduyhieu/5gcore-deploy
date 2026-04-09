@@ -1,0 +1,43 @@
+- name: Check if k3s server is already installed
+  stat:
+    path: /usr/local/bin/k3s
+  register: k3s_binary
+
+- name: Install k3s server
+  shell: |
+    curl -sfL https://get.k3s.io | \
+      K3S_TOKEN={{ k3s_token }} \
+      INSTALL_K3S_EXEC="server \
+        --disable traefik \
+        --advertise-address {{ master_ip }} \
+        --node-ip {{ master_ip }} \
+        --flannel-iface eth1 \
+        --write-kubeconfig-mode 644" \
+      sh -
+  when: not k3s_binary.stat.exists
+  environment:
+    K3S_KUBECONFIG_MODE: "644"
+
+- name: Wait for k3s server to be ready
+  shell: k3s kubectl get nodes | grep -q " Ready"
+  register: result
+  retries: 30
+  delay: 5
+  until: result.rc == 0
+  changed_when: false
+
+- name: Fetch node token
+  slurp:
+    src: /var/lib/rancher/k3s/server/node-token
+  register: node_token_slurp
+
+- name: Register node token as fact
+  set_fact:
+    k3s_node_token: "{{ node_token_slurp.content | b64decode | trim }}"
+
+- name: Fetch kubeconfig
+  fetch:
+    src: /etc/rancher/k3s/k3s.yaml
+    dest: "{{ playbook_dir }}/kubeconfig"
+    flat: yes
+  when: fetch_kubeconfig | default(true)

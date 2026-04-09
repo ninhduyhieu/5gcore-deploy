@@ -1,0 +1,41 @@
+---
+- name: Ensure containerd certs.d directory exists
+  file:
+    path: /etc/containerd/certs.d
+    state: directory
+    mode: "0755"
+
+- name: Ensure local registry hosts directory exists
+  file:
+    path: "/etc/containerd/certs.d/{{ local_registry }}"
+    state: directory
+    mode: "0755"
+
+- name: Point containerd registry config_path to certs.d
+  replace:
+    path: /etc/containerd/config.toml
+    regexp: 'config_path = ""'
+    replace: 'config_path = "/etc/containerd/certs.d"'
+
+- name: Configure containerd registry hosts.toml
+  copy:
+    dest: "/etc/containerd/certs.d/{{ local_registry }}/hosts.toml"
+    mode: "0644"
+    content: |
+      server = "http://{{ local_registry }}"
+
+      [host."http://{{ local_registry }}"]
+        capabilities = ["pull", "resolve", "push"]
+        skip_verify = true
+
+- name: Restart containerd
+  systemd:
+    name: containerd
+    state: restarted
+    enabled: yes
+
+- name: Restart kubelet
+  systemd:
+    name: kubelet
+    state: restarted
+    enabled: yes

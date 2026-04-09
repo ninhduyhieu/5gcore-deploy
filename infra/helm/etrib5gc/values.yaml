@@ -1,0 +1,214 @@
+global:
+  namespace: etri6g
+  imagePullPolicy: Never
+  plmnId:
+    mcc: "001"
+    mnc: "01"
+  plmnIdLabel: "001-01"
+  meshRegistrar: "127.0.0.2"
+  gatewayClusterIP: "10.100.100.21"
+  controllerClusterIP: "10.100.100.10"
+  syncWave:
+    rbac: "0"
+    mesh: "1"
+    core: "2"
+    smf: "3"
+    amfPran: "4"
+
+controller:
+  enabled: true
+  image: b5gc-ctrl
+  replicas: 1
+  port: 8888
+  command: ["./controller"]
+  args: ["-c", "/etc/config/controller.json"]
+  nodeSelector:
+    site: centre
+  serviceAccount:
+    create: true
+    name: ctrl-acc
+    role:
+      name: get-svc-role
+      rules:
+        - apiGroups: [""]
+          resources: ["services"]
+          verbs: ["get", "list", "watch"]
+  service:
+    type: NodePort
+    port: 8888
+    clusterIP: "10.100.100.10"
+    nodePort: 30008
+  config: {}
+
+gateway:
+  enabled: true
+  image: b5gc-gateway
+  replicas: 1
+  port: 7777
+  command: ["./gateway"]
+  args: ["-c", "/etc/config/gateway.json"]
+  nodeSelector:
+    site: centre
+  serviceAccount:
+    create: true
+    name: gw-acc
+    role:
+      name: get-pods-role
+      rules:
+        - apiGroups: [""]
+          resources: ["pods"]
+          verbs: ["get", "list", "watch"]
+  service:
+    type: NodePort
+    port: 7777
+    clusterIP: "10.100.100.21"
+    nodePort: 30007
+  config:
+    registeredAddr: ""
+    bind: "0.0.0.0"
+    controller: "10.100.100.10"
+    labels:
+      loc: "daejeon"
+
+nsm:
+  enabled: true
+  image: b5gc-nsm
+  replicas: 1
+  command: ["./nsm"]
+  args: ["-c", "/etc/config/nsm.json"]
+  nodeSelector:
+    site: centre
+  service:
+    type: ClusterIP
+    clusterIP: None
+    port: 9001
+
+udm:
+  enabled: true
+  image: b5gc-udm
+  replicas: 1
+  command: ["./udm"]
+  args: ["-c", "/etc/config/udm.json"]
+  nodeSelector:
+    site: centre
+  service:
+    type: ClusterIP
+    clusterIP: None
+    port: 9001
+
+ausf:
+  enabled: true
+  image: b5gc-ausf
+  replicas: 1
+  command: ["./ausf"]
+  args: ["-c", "/etc/config/ausf.json"]
+  nodeSelector:
+    site: centre
+  service:
+    type: ClusterIP
+    clusterIP: None
+    port: 9001
+
+pcf:
+  enabled: true
+  image: b5gc-pcf
+  replicas: 1
+  command: ["./pcf"]
+  args: ["-c", "/etc/config/pcf.json"]
+  nodeSelector:
+    site: centre
+  service:
+    type: ClusterIP
+    clusterIP: None
+    port: 9001
+
+damf:
+  enabled: true
+  image: b5gc-damf
+  replicas: 1
+  command: ["./damf"]
+  args: ["-c", "/etc/config/damf.json"]
+  nodeSelector:
+    site: centre
+  service:
+    type: ClusterIP
+    clusterIP: None
+    port: 9001
+
+smf:
+  enabled: true
+  image: b5gc-smf
+  replicas: 2
+  command: ["./smf"]
+  args: ["-c", "/etc/config/smf.json"]
+  nodeSelector:
+    site: centre
+  service:
+    type: ClusterIP
+    clusterIP: None
+    port: 9001
+
+pran:
+  enabled: true
+  image: b5gc-pran
+  replicas: 1
+  command: ["./pran"]
+  args: ["-c", "/etc/config/pran.json"]
+  nodeSelector:
+    site: edge
+  service:
+    type: NodePort
+    port: 38412
+    nodePort: 30500
+
+upf:
+  enabled: false
+  image: b5gc-upf
+
+sepp:
+  enabled: true
+  image: b5gc-sepp
+  replicas: 1
+  command: ["./sepp"]
+  args: ["-c", "/etc/config/sepp.json"]
+  nodeSelector:
+    site: centre
+  service:
+    type: ClusterIP
+    clusterIP: None
+    port: 9001
+
+amfSets:
+  - setId: "10-100"
+    image: b5gc-amf
+    replicas: 2
+    command: ["./amf"]
+    args: ["-c", "/etc/config/amf.json"]
+    nodeSelector:
+      site: edge
+    service:
+      type: ClusterIP
+      clusterIP: None
+      port: 9001
+  - setId: "10-101"
+    image: b5gc-amf
+    replicas: 1
+    command: ["./amf"]
+    args: ["-c", "/etc/config/amf.json"]
+    nodeSelector:
+      site: edge
+    service:
+      type: ClusterIP
+      clusterIP: None
+      port: 9001
+  - setId: "10-102"
+    image: b5gc-amf
+    replicas: 1
+    command: ["./amf"]
+    args: ["-c", "/etc/config/amf.json"]
+    nodeSelector:
+      site: edge
+    service:
+      type: ClusterIP
+      clusterIP: None
+      port: 9001

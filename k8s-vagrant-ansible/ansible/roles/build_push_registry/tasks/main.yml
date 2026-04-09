@@ -1,0 +1,145 @@
+---
+- name: Ensure artifact directory exists
+  file:
+    path: /vagrant/artifacts
+    state: directory
+    mode: "0755"
+
+- name: Ensure rsync is installed
+  apt:
+    name: rsync
+    state: present
+    update_cache: true
+  become: true
+
+- name: Check nf Dockerfile exists
+  stat:
+    path: "{{ etri_repo_root }}/docker/nf.Dockerfile"
+  register: nf_dockerfile
+
+- name: Fail if nf.Dockerfile is missing
+  fail:
+    msg: "Missing {{ etri_repo_root }}/docker/nf.Dockerfile"
+  when: not nf_dockerfile.stat.exists
+
+- name: Define local build root
+  set_fact:
+    etri_build_root: /home/vagrant/etri-build
+
+- name: Remove old local build root
+  file:
+    path: "{{ etri_build_root }}"
+    state: absent
+
+- name: Recreate local build root
+  file:
+    path: "{{ etri_build_root }}"
+    state: directory
+    mode: "0755"
+
+- name: Copy source from shared folder to local build root with rsync
+  shell: |
+    set -euxo pipefail
+    rsync -a --delete \
+      --exclude '.git' \
+      --exclude 'artifacts' \
+      --exclude '.vagrant' \
+      "{{ etri_repo_root }}/" "{{ etri_build_root }}/"
+  args:
+    executable: /bin/bash
+  changed_when: true
+
+- name: Create correct b5gc build context
+  shell: |
+    set -euxo pipefail
+    cd "{{ etri_build_root }}"
+    mkdir -p b5gc
+    rsync -a --delete --exclude='b5gc' ./ b5gc/
+    cp go.mod b5gc/
+    if [ -f go.sum ]; then
+      cp go.sum b5gc/
+    fi
+  args:
+    executable: /bin/bash
+  changed_when: true
+
+- name: Build required NF images
+  shell: |
+    set -euxo pipefail
+    cd "{{ etri_build_root }}"
+    docker build \
+      --build-arg B5GC_MODULE={{ item.module }} \
+      -f docker/nf.Dockerfile \
+      -t {{ item.image }} .
+  args:
+    executable: /bin/bash
+  loop:
+    - { module: "controller", image: "b5gc-controller:latest" }
+    - { module: "gateway", image: "b5gc-gateway:latest" }
+    - { module: "nsm", image: "b5gc-nsm:latest" }
+    - { module: "pran", image: "b5gc-pran:latest" }
+    - { module: "udm", image: "b5gc-udm:latest" }
+    - { module: "ausf", image: "b5gc-ausf:latest" }
+    - { module: "pcf", image: "b5gc-pcf:latest" }
+    - { module: "damf", image: "b5gc-damf:latest" }
+    - { module: "smf", image: "b5gc-smf:latest" }
+    - { module: "amf", image: "b5gc-amf:latest" }
+  loop_control:
+    label: "{{ item.image }}"
+  changed_when: true
+
+- name: Pull mongo image for local registry
+  shell: docker pull {{ helm_defaults.udr_image }}
+  args:
+    executable: /bin/bash
+  changed_when: true
+
+- name: Tag NF images for local registry
+  shell: |
+    docker tag {{ item }} {{ local_registry }}/{{ item }}
+  args:
+    executable: /bin/bash
+  loop:
+    - b5gc-controller:latest
+    - b5gc-gateway:latest
+    - b5gc-nsm:latest
+    - b5gc-pran:latest
+    - b5gc-udm:latest
+    - b5gc-ausf:latest
+    - b5gc-pcf:latest
+    - b5gc-damf:latest
+    - b5gc-smf:latest
+    - b5gc-amf:latest
+  changed_when: true
+
+- name: Tag mongo image for local registry
+  shell: |
+    docker tag {{ helm_defaults.udr_image }} {{ local_registry }}/mongo:latest
+  args:
+    executable: /bin/bash
+  changed_when: true
+
+- name: Push NF images to local registry
+  shell: |
+    docker push {{ local_registry }}/{{ item }}
+  args:
+    executable: /bin/bash
+  loop:
+    - b5gc-controller:latest
+    - b5gc-gateway:latest
+    - b5gc-nsm:latest
+    - b5gc-pran:latest
+    - b5gc-udm:latest
+    - b5gc-ausf:latest
+    - b5gc-pcf:latest
+    - b5gc-damf:latest
+    - b5gc-smf:latest
+    - b5gc-amf:latest
+  changed_when: true
+
+- name: Push mongo image to local registry
+  shell: |
+    docker push {{ local_registry }}/mongo:latest
+  args:
+    executable: /bin/bash
+  changed_when: true

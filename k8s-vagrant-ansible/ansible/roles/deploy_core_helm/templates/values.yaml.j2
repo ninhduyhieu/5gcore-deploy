@@ -1,0 +1,94 @@
+createNamespace: false
+
+global:
+  namespace: {{ core_namespace }}
+  imageRegistry: "{{ local_registry }}"
+  imagePullPolicy: IfNotPresent
+
+  plmn:
+    mcc: "{{ helm_defaults.plmn.mcc }}"
+    mnc: "{{ helm_defaults.plmn.mnc }}"
+    label: "{{ helm_defaults.plmn.label }}"
+
+  controller:
+    serviceName: "{{ helm_defaults.ctrl_service_name }}"
+    clusterIP: "{{ helm_defaults.ctrl_cluster_ip }}"
+    port: {{ helm_defaults.ctrl_port }}
+    nodePort: {{ controller_nodeport | default(30008) }}
+
+  gateway:
+    serviceName: "{{ gateway_service_name | default(helm_defaults.gateway_service_name) }}"
+    port: {{ helm_defaults.gateway_port }}
+    nodePort: {{ gateway_nodeport | default(30007) }}
+    externalIp: "{{ gateway_external_ip }}"
+    location: "{{ helm_defaults.gateway_location }}"
+
+  udr:
+    serviceName: "{{ helm_defaults.udr_service_name }}"
+    clusterIP: "{{ helm_defaults.udr_cluster_ip }}"
+    port: {{ helm_defaults.udr_port }}
+    nodePort: {{ udr_nodeport | default(helm_defaults.udr_nodeport) }}
+    image: mongo:latest
+    pvcSize: 5Gi
+    storageClass: gp2
+
+  pran:
+    sbiPort: {{ helm_defaults.pran_sbi_port }}
+    ngapPort: {{ helm_defaults.pran_ngap_port }}
+    nodePort: {{ pran_nodeport | default(30500) }}
+    tac: "{{ helm_defaults.pran_tac }}"
+    ngapBind: "{{ helm_defaults.pran_ngap_bind }}"
+
+  serviceDiscovery:
+    nsm: nsm-208-93
+    udm: udm-208-93
+    pcf: pcf-208-93
+    ausf: ausf-208-93
+    damf: damf-208-93
+    amf: amf-208-93
+    amf_10_100: amf-208-93-10-100
+    amf_10_101: amf-208-93-10-101
+    amf_10_102: amf-208-93-10-102
+    smf_slice1: smf-208-93-1-010203
+    upf: upf-208-93
+
+layout:
+  controller:
+    replicas: {{ nf_layout.controller.replicas }}
+    site: {{ nf_layout.controller.site }}
+  gateway:
+    replicas: {{ nf_layout.gateway.replicas }}
+    site: {{ nf_layout.gateway.site }}
+  nsm:
+    replicas: {{ nf_layout.nsm.replicas }}
+    site: {{ nf_layout.nsm.site }}
+  udr:
+    replicas: {{ nf_layout.udr.replicas }}
+    site: {{ nf_layout.udr.site }}
+  udm:
+    replicas: {{ nf_layout.udm.replicas }}
+    site: {{ nf_layout.udm.site }}
+  ausf:
+    replicas: {{ nf_layout.ausf.replicas }}
+    site: {{ nf_layout.ausf.site }}
+  pcf:
+    replicas: {{ nf_layout.pcf.replicas }}
+    site: {{ nf_layout.pcf.site }}
+  damf:
+    replicas: {{ nf_layout.damf.replicas }}
+    site: {{ nf_layout.damf.site }}
+  smf:
+    replicas: {{ nf_layout.smf.replicas }}
+    site: {{ nf_layout.smf.site }}
+  pran:
+    replicas: {{ nf_layout.pran.replicas }}
+    site: {{ nf_layout.pran.site }}
+  amf_10_100:
+    replicas: {{ nf_layout.amf_10_100.replicas }}
+    site: {{ nf_layout.amf_10_100.site }}
+  amf_10_101:
+    replicas: {{ nf_layout.amf_10_101.replicas }}
+    site: {{ nf_layout.amf_10_101.site }}
+  amf_10_102:
+    replicas: {{ nf_layout.amf_10_102.replicas }}
+    site: {{ nf_layout.amf_10_102.site }}

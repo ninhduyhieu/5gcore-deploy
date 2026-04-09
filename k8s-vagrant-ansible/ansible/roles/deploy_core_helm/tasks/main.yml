@@ -1,0 +1,175 @@
+---
+- name: Ensure required packages are present
+  apt:
+    name:
+      - curl
+      - tar
+    state: present
+    update_cache: yes
+
+- name: Check current helm version
+  shell: helm version --short
+  register: helm_version_check
+  changed_when: false
+  failed_when: false
+
+- name: Download Helm archive
+  shell: |
+    set -euxo pipefail
+    cd /tmp
+    rm -f helm-v3.16.1-linux-amd64.tar.gz
+    curl -L --http1.1 -o helm-v3.16.1-linux-amd64.tar.gz https://get.helm.sh/helm-v3.16.1-linux-amd64.tar.gz
+  args:
+    executable: /bin/bash
+  when: helm_version_check.rc != 0
+
+- name: Extract Helm archive
+  shell: |
+    set -euxo pipefail
+    cd /tmp
+    rm -rf linux-amd64
+    tar -xzf helm-v3.16.1-linux-amd64.tar.gz
+  args:
+    executable: /bin/bash
+  when: helm_version_check.rc != 0
+
+- name: Install Helm binary
+  copy:
+    src: /tmp/linux-amd64/helm
+    dest: /usr/local/bin/helm
+    mode: "0755"
+    remote_src: true
+  when: helm_version_check.rc != 0
+
+- name: Verify helm installation
+  shell: helm version --short
+  register: helm_verify
+  changed_when: false
+
+- name: Ensure chart path exists
+  stat:
+    path: "{{ helm_chart_path }}"
+  register: helm_chart_stat
+
+- name: Fail if chart path does not exist
+  fail:
+    msg: "Helm chart path not found: {{ helm_chart_path }}"
+  when: not helm_chart_stat.stat.exists
+
+- name: Render Helm values file
+  template:
+    src: values.yaml.j2
+    dest: /tmp/etri-values.yaml
+    mode: "0644"
+
+- name: Remove old Helm release if present
+  shell: |
+    helm -n {{ core_namespace }} uninstall {{ helm_release_name }} || true
+  environment:
+    KUBECONFIG: "{{ helm_kubeconfig }}"
+  changed_when: true
+
+- name: Delete old namespaced resources that block Helm ownership
+  shell: |
+    kubectl --kubeconfig={{ helm_kubeconfig }} -n {{ core_namespace }} delete \
+      deployment ctrl-dep gateway-dep nsm-dep mongo-db udm-dep ausf-dep pcf-dep damf-dep smf-slice1-dep amf-10-100-dep amf-10-101-dep amf-10-102-dep pran-dep \
+      --ignore-not-found=true
+    kubectl --kubeconfig={{ helm_kubeconfig }} -n {{ core_namespace }} delete \
+      svc ctrl-svc gateway-svc pran-sbi pran-ngap udr-mongo nsm-208-93 udm-208-93 pcf-208-93 ausf-208-93 damf-208-93 amf-208-93 amf-208-93-10-100 amf-208-93-10-101 amf-208-93-10-102 smf-208-93-1-010203 upf-208-93 \
+      --ignore-not-found=true
+    kubectl --kubeconfig={{ helm_kubeconfig }} -n {{ core_namespace }} delete \
+      configmap ctrl-config gateway-config nsm-config pran-config udm-config ausf-config pcf-config damf-config smf-slice1-config amf-10-100-config amf-10-101-config amf-10-102-config \
+      --ignore-not-found=true
+    kubectl --kubeconfig={{ helm_kubeconfig }} -n {{ core_namespace }} delete \
+      sa ctrl-acc gw-acc \
+      --ignore-not-found=true
+    kubectl --kubeconfig={{ helm_kubeconfig }} -n {{ core_namespace }} delete \
+      role get-svc-role get-pods-role \
+      --ignore-not-found=true
+    kubectl --kubeconfig={{ helm_kubeconfig }} -n {{ core_namespace }} delete \
+      rolebinding bind-get-svc-role bind-get-pods-role \
+      --ignore-not-found=true
+    kubectl --kubeconfig={{ helm_kubeconfig }} -n {{ core_namespace }} delete pvc mongodb-pvc --ignore-not-found=true
+    kubectl --kubeconfig={{ helm_kubeconfig }} delete pv mongodb-pv --ignore-not-found=true
+    kubectl --kubeconfig={{ helm_kubeconfig }} delete storageclass gp2 --ignore-not-found=true
+  args:
+    executable: /bin/bash
+  changed_when: true
+
+- name: Wait a bit after cleanup
+  pause:
+    seconds: 10
+
+- name: Lint Helm chart
+  shell: |
+    helm lint {{ helm_chart_path }} -f /tmp/etri-values.yaml
+  environment:
+    KUBECONFIG: "{{ helm_kubeconfig }}"
+  changed_when: false
+
+- name: Render Helm manifests for preview
+  shell: |
+    helm template {{ helm_release_name }} {{ helm_chart_path }} \
+      -n {{ core_namespace }} \
+      -f /tmp/etri-values.yaml >/tmp/etri-rendered.yaml
+  environment:
+    KUBECONFIG: "{{ helm_kubeconfig }}"
+  changed_when: false
+
+- name: Deploy core with Helm
+  shell: |
+    helm upgrade --install {{ helm_release_name }} {{ helm_chart_path }} \
+      --namespace {{ core_namespace }} \
+      --create-namespace \
+      -f /tmp/etri-values.yaml
+  environment:
+    KUBECONFIG: "{{ helm_kubeconfig }}"
+  changed_when: true
+
+- name: Wait for deployments rollout
+  shell: |
+    kubectl --kubeconfig={{ helm_kubeconfig }} -n {{ core_namespace }} rollout status deployment/{{ item }} --timeout=600s
+  loop:
+    - ctrl-dep
+    - gateway-dep
+    - nsm-dep
+    - mongo-db
+    - udm-dep
+    - ausf-dep
+    - pcf-dep
+    - damf-dep
+    - smf-slice1-dep
+    - amf-10-100-dep
+    - amf-10-101-dep
+    - amf-10-102-dep
+    - pran-dep
+  loop_control:
+    label: "{{ item }}"
+  environment:
+    KUBECONFIG: "{{ helm_kubeconfig }}"
+  changed_when: false
+  failed_when: false
+
+- name: Show pods after Helm deploy
+  shell: kubectl --kubeconfig={{ helm_kubeconfig }} -n {{ core_namespace }} get pods -o wide
+  environment:
+    KUBECONFIG: "{{ helm_kubeconfig }}"
+  register: helm_pods
+  changed_when: false
+  failed_when: false
+
+- name: Print pods after Helm deploy
+  debug:
+    var: helm_pods.stdout_lines
+
+- name: Show services after Helm deploy
+  shell: kubectl --kubeconfig={{ helm_kubeconfig }} -n {{ core_namespace }} get svc -o wide
+  environment:
+    KUBECONFIG: "{{ helm_kubeconfig }}"
+  register: helm_svcs
+  changed_when: false
+  failed_when: false
+
+- name: Print services after Helm deploy
+  debug:
+    var: helm_svcs.stdout_lines

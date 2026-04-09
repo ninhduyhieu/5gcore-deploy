@@ -1,0 +1,18 @@
+{
+	"plmnId": {
+		"mcc": "001",
+		"mnc": "01"
+	},
+	"logLevel":"info",
+	"t3502": 200,
+	"t3550": 500,
+	"mesh": {
+		"registrar": "127.0.0.2",
+		"bind": "127.0.0.7",
+		"labels": {
+			"plmnId":"001-01",
+			"app": "damf",
+			"region":"daejeon"
+		}
+	}
+}

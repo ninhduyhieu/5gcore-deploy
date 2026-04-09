@@ -1,0 +1,14 @@
+{
+	"plmnId": {
+		"mcc": "450",
+		"mnc": "05"
+	},
+	"mesh": {
+		"bind":"127.0.0.4",
+		"registrar": "127.0.0.2",
+		"labels": {
+			"plmnId":"450-05",
+			"app": "pcf"
+		}
+	}
+}
