@@ -1,0 +1,129 @@
+name: Build and Deploy from Local Source
+
+on:
+  workflow_dispatch:
+    inputs:
+      image_owner:
+        description: "GHCR owner"
+        required: true
+        default: "ninhduyhieu"
+      image_tag:
+        description: "Image tag"
+        required: true
+        default: "latest"
+
+jobs:
+  build-and-deploy:
+    runs-on: [self-hosted, linux, x64]
+
+    env:
+      SOURCE_DIR: /home/hieu/Downloads/etrib5gc
+      DOCKER_DIR: /home/hieu/Downloads/etrib5gc/docker
+
+    steps:
+      - name: Checkout infra repo
+        uses: actions/checkout@v4
+
+      - name: Verify local source exists
+        shell: bash
+        run: |
+          test -d "$SOURCE_DIR"
+          test -d "$DOCKER_DIR"
+          ls -la "$SOURCE_DIR"
+          ls -la "$DOCKER_DIR"
+
+      - name: Resolve variables
+        id: vars
+        shell: bash
+        run: |
+          echo "owner=${{ inputs.image_owner }}" >> "$GITHUB_OUTPUT"
+          if [ "${{ inputs.image_tag }}" = "latest" ]; then
+            echo "tag=manual-$(date +%Y%m%d-%H%M%S)" >> "$GITHUB_OUTPUT"
+          else
+            echo "tag=${{ inputs.image_tag }}" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push controller
+        shell: bash
+        run: |
+          IMAGE="ghcr.io/${{ steps.vars.outputs.owner }}/b5gc-controller"
+          TAG="${{ steps.vars.outputs.tag }}"
+          docker build --target b5gc-controller -t "${IMAGE}:${TAG}" -t "${IMAGE}:latest" -f "$DOCKER_DIR/nf.Dockerfile" "$DOCKER_DIR"
+          docker push "${IMAGE}:${TAG}"
+          docker push "${IMAGE}:latest"
+
+      - name: Build and push gateway
+        shell: bash
+        run: |
+          IMAGE="ghcr.io/${{ steps.vars.outputs.owner }}/b5gc-gateway"
+          TAG="${{ steps.vars.outputs.tag }}"
+          docker build --target b5gc-gateway -t "${IMAGE}:${TAG}" -t "${IMAGE}:latest" -f "$DOCKER_DIR/nf.Dockerfile" "$DOCKER_DIR"
+          docker push "${IMAGE}:${TAG}"
+          docker push "${IMAGE}:latest"
+
+      - name: Build and push nsm
+        shell: bash
+        run: |
+          IMAGE="ghcr.io/${{ steps.vars.outputs.owner }}/b5gc-nsm"
+          TAG="${{ steps.vars.outputs.tag }}"
+          docker build --target b5gc-nsm -t "${IMAGE}:${TAG}" -t "${IMAGE}:latest" -f "$DOCKER_DIR/nf.Dockerfile" "$DOCKER_DIR"
+          docker push "${IMAGE}:${TAG}"
+          docker push "${IMAGE}:latest"
+
+      - name: Build and push others
+        shell: bash
+        run: |
+          TAG="${{ steps.vars.outputs.tag }}"
+          OWNER="${{ steps.vars.outputs.owner }}"
+          for nf in ausf udm pcf damf amf smf; do
+            IMAGE="ghcr.io/${OWNER}/b5gc-${nf}"
+            docker build --target b5gc-${nf} -t "${IMAGE}:${TAG}" -t "${IMAGE}:latest" -f "$DOCKER_DIR/nf.Dockerfile" "$DOCKER_DIR"
+            docker push "${IMAGE}:${TAG}"
+            docker push "${IMAGE}:latest"
+          done
+
+      - name: Set kubeconfig
+        shell: bash
+        run: |
+          export KUBECONFIG="$GITHUB_WORKSPACE/kubeconfig"
+          kubectl get nodes -o wide
+
+      - name: Ensure namespace
+        shell: bash
+        run: |
+          export KUBECONFIG="$GITHUB_WORKSPACE/kubeconfig"
+          kubectl create namespace etri6g --dry-run=client -o yaml | kubectl apply -f -
+
+      - name: Render manifests
+        shell: bash
+        run: |
+          ./scripts/render-ghcr-images.sh "${{ steps.vars.outputs.owner }}" "${{ steps.vars.outputs.tag }}" rendered
+
+      - name: Deploy manifests
+        shell: bash
+        run: |
+          export KUBECONFIG="$GITHUB_WORKSPACE/kubeconfig"
+          kubectl apply -f rendered/ctrl.yaml
+          kubectl apply -f rendered/gw.yaml
+          kubectl apply -f rendered/nsm.yaml
+          kubectl apply -f rendered/mongo.yaml
+          kubectl apply -f rendered/deploy-other.yaml
+
+      - name: Verify pods
+        shell: bash
+        run: |
+          export KUBECONFIG="$GITHUB_WORKSPACE/kubeconfig"
+          kubectl get pods -n etri6g -o wide
+
+      - name: Verify services
+        shell: bash
+        run: |
+          export KUBECONFIG="$GITHUB_WORKSPACE/kubeconfig"
+          kubectl get svc -n etri6g
