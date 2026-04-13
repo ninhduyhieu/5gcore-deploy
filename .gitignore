@@ -4,3 +4,4 @@ etrib5gc/
 .vagrant/
 .envrc
 kubeconfig
+rendered/
