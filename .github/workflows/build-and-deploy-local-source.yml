@@ -25,7 +25,7 @@ jobs:
       - name: Checkout infra repo
         uses: actions/checkout@v4
 
-      - name: Verify required tools
+      - name: Verify required tools and local source
         shell: bash
         run: |
           set -e
@@ -39,6 +39,8 @@ jobs:
           test -f "$DOCKER_DIR/nf.Dockerfile"
           test -f "$DOCKER_DIR/copybuild.sh"
           test -f "$DOCKER_DIR/Makefile"
+          ls -la "$SOURCE_DIR"
+          ls -la "$DOCKER_DIR"
 
       - name: Provision VMs with Vagrant
         shell: bash
@@ -47,12 +49,32 @@ jobs:
           cd "$INFRA_DIR"
           vagrant up
 
-      - name: Run Ansible playbook
+      - name: Wait for all nodes SSH to become reachable
         shell: bash
         run: |
           set -e
           cd "$INFRA_DIR"
-          ansible-playbook -i inventory/hosts.yaml playbook.yml
+          for i in {1..20}; do
+            if ansible -i inventory/hosts.yaml all -m ping >/dev/null 2>&1; then
+              echo "All nodes are reachable"
+              exit 0
+            fi
+            echo "Waiting for nodes SSH... attempt $i/20"
+            sleep 15
+          done
+          echo "Nodes did not become reachable in time"
+          exit 1
+
+      - name: Run Ansible playbook with retry
+        shell: bash
+        run: |
+          set -e
+          cd "$INFRA_DIR"
+          ansible-playbook -i inventory/hosts.yaml playbook.yml || {
+            echo "First attempt failed, waiting 20s and retrying..."
+            sleep 20
+            ansible-playbook -i inventory/hosts.yaml playbook.yml
+          }
 
       - name: Verify cluster after provisioning
         shell: bash
