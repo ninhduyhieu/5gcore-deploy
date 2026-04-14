@@ -1,4 +1,4 @@
-name: Build and Deploy from Local Source
+name: Provision, Build and Deploy from Local Source
 
 on:
   workflow_dispatch:
@@ -13,10 +13,11 @@ on:
         default: "latest"
 
 jobs:
-  build-and-deploy:
+  provision-build-deploy:
     runs-on: [self-hosted, linux, x64]
 
     env:
+      INFRA_DIR: /home/hieu/5gcore-deploy
       SOURCE_DIR: /home/hieu/Downloads/etrib5gc
       DOCKER_DIR: /home/hieu/Downloads/etrib5gc/docker
 
@@ -24,16 +25,43 @@ jobs:
       - name: Checkout infra repo
         uses: actions/checkout@v4
 
-      - name: Verify local source exists
+      - name: Verify required tools
         shell: bash
         run: |
+          set -e
+          vagrant --version
+          ansible --version
+          docker --version
+          kubectl version --client
+          test -d "$INFRA_DIR"
           test -d "$SOURCE_DIR"
           test -d "$DOCKER_DIR"
           test -f "$DOCKER_DIR/nf.Dockerfile"
           test -f "$DOCKER_DIR/copybuild.sh"
           test -f "$DOCKER_DIR/Makefile"
-          ls -la "$SOURCE_DIR"
-          ls -la "$DOCKER_DIR"
+
+      - name: Provision VMs with Vagrant
+        shell: bash
+        run: |
+          set -e
+          cd "$INFRA_DIR"
+          vagrant up
+
+      - name: Run Ansible playbook
+        shell: bash
+        run: |
+          set -e
+          cd "$INFRA_DIR"
+          ansible-playbook -i inventory/hosts.yaml playbook.yml
+
+      - name: Verify cluster after provisioning
+        shell: bash
+        run: |
+          set -e
+          cd "$INFRA_DIR"
+          export KUBECONFIG="$INFRA_DIR/kubeconfig"
+          kubectl get nodes -o wide
+          kubectl get pods -A
 
       - name: Resolve variables
         id: vars
@@ -56,6 +84,7 @@ jobs:
       - name: Prepare build context
         shell: bash
         run: |
+          set -e
           cd "$DOCKER_DIR"
           chmod +x copybuild.sh
           ./copybuild.sh
@@ -63,6 +92,7 @@ jobs:
       - name: Build and push base
         shell: bash
         run: |
+          set -e
           cd "$DOCKER_DIR"
           IMAGE="ghcr.io/${{ steps.vars.outputs.owner }}/b5gc-base"
           TAG="${{ steps.vars.outputs.tag }}"
@@ -73,6 +103,7 @@ jobs:
       - name: Build and push controller
         shell: bash
         run: |
+          set -e
           cd "$DOCKER_DIR"
           IMAGE="ghcr.io/${{ steps.vars.outputs.owner }}/b5gc-controller"
           TAG="${{ steps.vars.outputs.tag }}"
@@ -83,6 +114,7 @@ jobs:
       - name: Build and push gateway
         shell: bash
         run: |
+          set -e
           cd "$DOCKER_DIR"
           IMAGE="ghcr.io/${{ steps.vars.outputs.owner }}/b5gc-gateway"
           TAG="${{ steps.vars.outputs.tag }}"
@@ -93,6 +125,7 @@ jobs:
       - name: Build and push nsm
         shell: bash
         run: |
+          set -e
           cd "$DOCKER_DIR"
           IMAGE="ghcr.io/${{ steps.vars.outputs.owner }}/b5gc-nsm"
           TAG="${{ steps.vars.outputs.tag }}"
@@ -103,6 +136,7 @@ jobs:
       - name: Build and push others
         shell: bash
         run: |
+          set -e
           cd "$DOCKER_DIR"
           TAG="${{ steps.vars.outputs.tag }}"
           OWNER="${{ steps.vars.outputs.owner }}"
@@ -113,27 +147,27 @@ jobs:
             docker push "${IMAGE}:latest"
           done
 
-      - name: Set kubeconfig
-        shell: bash
-        run: |
-          export KUBECONFIG="$GITHUB_WORKSPACE/kubeconfig"
-          kubectl get nodes -o wide
-
       - name: Ensure namespace
         shell: bash
         run: |
-          export KUBECONFIG="$GITHUB_WORKSPACE/kubeconfig"
+          set -e
+          cd "$INFRA_DIR"
+          export KUBECONFIG="$INFRA_DIR/kubeconfig"
           kubectl create namespace etri6g --dry-run=client -o yaml | kubectl apply -f -
 
       - name: Render manifests
         shell: bash
         run: |
+          set -e
+          cd "$INFRA_DIR"
           ./scripts/render-ghcr-images.sh "${{ steps.vars.outputs.owner }}" "${{ steps.vars.outputs.tag }}" rendered
 
       - name: Deploy manifests
         shell: bash
         run: |
-          export KUBECONFIG="$GITHUB_WORKSPACE/kubeconfig"
+          set -e
+          cd "$INFRA_DIR"
+          export KUBECONFIG="$INFRA_DIR/kubeconfig"
           kubectl apply -f rendered/ctrl.yaml
           kubectl apply -f rendered/gw.yaml
           kubectl apply -f rendered/nsm.yaml
@@ -143,11 +177,15 @@ jobs:
       - name: Verify pods
         shell: bash
         run: |
-          export KUBECONFIG="$GITHUB_WORKSPACE/kubeconfig"
+          set -e
+          cd "$INFRA_DIR"
+          export KUBECONFIG="$INFRA_DIR/kubeconfig"
           kubectl get pods -n etri6g -o wide
 
       - name: Verify services
         shell: bash
         run: |
-          export KUBECONFIG="$GITHUB_WORKSPACE/kubeconfig"
+          set -e
+          cd "$INFRA_DIR"
+          export KUBECONFIG="$INFRA_DIR/kubeconfig"
           kubectl get svc -n etri6g
