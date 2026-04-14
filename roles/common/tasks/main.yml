@@ -1,0 +1,20 @@
+---
+- name: Update apt package index
+  apt:
+    update_cache: yes
+    upgrade: yes
+    cache_valid_time: 3600
+
+- name: Install required packages
+  apt:
+    name:
+      - apt-transport-https
+      - ca-certificates
+      - curl
+    state: present
+
+- name: Fix hosts file
+  template:
+    src: hosts
+    dest: /etc/hosts
+    mode: '0644'

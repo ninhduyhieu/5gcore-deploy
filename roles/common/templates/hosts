@@ -1,0 +1,7 @@
+127.0.0.1 localhost
+127.0.1.1 {{ inventory_hostname }}
+
+# Vagrant k3s cluster
+{% for host in groups['all'] %}
+{{ hostvars[host].ansible_host }} {{ host }}
+{% endfor %}

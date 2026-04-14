@@ -1,6 +1,0 @@
-apiVersion: v2
-name: etrib5gc
-description: ETRI/B5GC core deployment for current k8s-vagrant-ansible repo
-type: application
-version: 0.1.0
-appVersion: "1.0.0"

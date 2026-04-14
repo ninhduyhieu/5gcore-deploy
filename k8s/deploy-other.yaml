@@ -1,0 +1,351 @@
+# === AUSF ===
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ausf-dep
+  namespace: etri6g
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: ausf
+  template:
+    metadata:
+      labels:
+        app: ausf
+        plmnId: 208-93
+    spec:
+      volumes:
+        - name: ausf-config
+          configMap:
+            name: ausf-config
+      containers:
+        - name: ausf
+          image: b5gc-ausf:latest
+          imagePullPolicy: IfNotPresent
+          command: ["./ausf"]
+          args: ["-c", "/etc/config/ausf.json"]
+          volumeMounts:
+            - mountPath: /etc/config
+              name: ausf-config
+          ports:
+            - containerPort: 9001
+            - containerPort: 7001
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: ausf-config
+  namespace: etri6g
+data:
+  ausf.json: |
+    {
+      "plmnId": {
+        "mcc": "001",
+        "mnc": "01"
+      },
+      "mesh": {
+        "registrar": "gateway-svc:7777",
+        "labels": {
+          "plmnId":"001-01",
+          "app": "ausf"
+        }
+      }
+    }
+
+---
+# === UDM ===
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: udm-dep
+  namespace: etri6g
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: udm
+  template:
+    metadata:
+      labels:
+        app: udm
+        plmnId: 208-93
+    spec:
+      volumes:
+        - name: udm-config
+          configMap:
+            name: udm-config
+      containers:
+        - name: udm
+          image: b5gc-udm:latest
+          imagePullPolicy: IfNotPresent
+          command: ["./udm"]
+          args: ["-c", "/etc/config/udm.json"]
+          volumeMounts:
+            - mountPath: /etc/config
+              name: udm-config
+          ports:
+            - containerPort: 9001
+            - containerPort: 7001
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: udm-config
+  namespace: etri6g
+data:
+  udm.json: |
+    {
+      "plmnId": {
+        "mcc": "001",
+        "mnc": "01"
+      },
+      "mesh": {
+        "registrar": "gateway-svc:7777",
+        "labels": {
+          "plmnId":"001-01",
+          "app": "udm"
+        }
+      }
+    }
+
+---
+# === PCF ===
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: pcf-dep
+  namespace: etri6g
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: pcf
+  template:
+    metadata:
+      labels:
+        app: pcf
+        plmnId: 208-93
+    spec:
+      volumes:
+        - name: pcf-config
+          configMap:
+            name: pcf-config
+      containers:
+        - name: pcf
+          image: b5gc-pcf:latest
+          imagePullPolicy: IfNotPresent
+          command: ["./pcf"]
+          args: ["-c", "/etc/config/pcf.json"]
+          volumeMounts:
+            - mountPath: /etc/config
+              name: pcf-config
+          ports:
+            - containerPort: 9001
+            - containerPort: 7001
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: pcf-config
+  namespace: etri6g
+data:
+  pcf.json: |
+    {
+      "plmnId": {
+        "mcc": "001",
+        "mnc": "01"
+      },
+      "mesh": {
+        "registrar": "gateway-svc:7777",
+        "labels": {
+          "plmnId":"001-01",
+          "app": "pcf"
+        }
+      }
+    }
+
+---
+# === DAMF ===
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: damf-dep
+  namespace: etri6g
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: damf
+  template:
+    metadata:
+      labels:
+        app: damf
+        plmnId: 208-93
+    spec:
+      volumes:
+        - name: damf-config
+          configMap:
+            name: damf-config
+      containers:
+        - name: damf
+          image: b5gc-damf:latest
+          imagePullPolicy: IfNotPresent
+          command: ["./damf"]
+          args: ["-c", "/etc/config/damf.json"]
+          volumeMounts:
+            - mountPath: /etc/config
+              name: damf-config
+          ports:
+            - containerPort: 9001
+            - containerPort: 7001
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: damf-config
+  namespace: etri6g
+data:
+  damf.json: |
+    {
+      "plmnId": {
+        "mcc": "001",
+        "mnc": "01"
+      },
+      "logLevel":"info",
+      "t3502": 200,
+      "t3550": 500,
+      "mesh": {
+        "registrar": "gateway-svc:7777",
+        "labels": {
+          "plmnId":"001-01",
+          "app": "damf",
+          "region":"daejeon"
+        }
+      }
+    }
+
+---
+# === AMF (10-100 set) - Reduced to 2 replicas ===
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: amf-10-100-dep
+  namespace: etri6g
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: amf
+      amfSet: 10-100
+  template:
+    metadata:
+      labels:
+        app: amf
+        amfSet: 10-100
+        plmnId: 208-93
+    spec:
+      volumes:
+        - name: amf-config
+          configMap:
+            name: amf-10-100-config
+      containers:
+        - name: amf
+          image: b5gc-amf:latest
+          imagePullPolicy: IfNotPresent
+          command: ["./amf"]
+          args: ["-c", "/etc/config/amf.json"]
+          volumeMounts:
+            - mountPath: /etc/config
+              name: amf-config
+          ports:
+            - containerPort: 9001
+            - containerPort: 7001
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: amf-10-100-config
+  namespace: etri6g
+data:
+  amf.json: |
+    {
+      "plmnId": {
+        "mcc": "001",
+        "mnc": "01"
+      },
+      "amfSet": "10-100",
+      "mesh": {
+        "registrar": "gateway-svc:7777",
+        "labels": {
+          "plmnId":"001-01",
+          "app": "amf",
+          "amfset":"10-100"
+        }
+      }
+    }
+
+---
+# === SMF - Reduced to 2 replicas ===
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: smf-slice1-dep
+  namespace: etri6g
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: smf
+      slice: 1-010203
+  template:
+    metadata:
+      labels:
+        app: smf
+        plmnId: 208-93
+        slice: 1-010203
+    spec:
+      volumes:
+        - name: smf-config
+          configMap:
+            name: smf-slice1-config
+      containers:
+        - name: smf
+          image: b5gc-smf:latest
+          imagePullPolicy: IfNotPresent
+          command: ["./smf"]
+          args: ["-c", "/etc/config/smf.json"]
+          volumeMounts:
+            - mountPath: /etc/config
+              name: smf-config
+          ports:
+            - containerPort: 9001
+            - containerPort: 7001
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: smf-slice1-config
+  namespace: etri6g
+data:
+  smf.json: |
+    {
+      "plmnId": {
+        "mcc": "001",
+        "mnc": "01"
+      },
+      "slice": {
+        "sst" : 1,
+        "sd": "010203"
+      },
+      "mesh": {
+        "registrar": "gateway-svc:7777",
+        "labels": {
+          "plmnId":"001-01",
+          "app": "smf",
+          "slice": "1-010203",
+          "version": "v1"
+        }
+      }
+    }
+

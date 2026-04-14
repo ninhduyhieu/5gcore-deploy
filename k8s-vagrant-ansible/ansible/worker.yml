@@ -1,9 +1,0 @@
----
-- name: Join Kubernetes workers
-  hosts: "{{ node_name }}"
-  become: yes
-  gather_facts: yes
-  vars_files:
-    - /vagrant/ansible/vars.yml
-  roles:
-    - worker_join
