@@ -3,6 +3,8 @@
   slurp:
     src: /etc/rancher/k3s/k3s.yaml
   register: kubeconfig_raw
+  become: true
+  run_once: true
 
 - name: Write kubeconfig locally with correct server address
   copy:
@@ -10,3 +12,5 @@
     dest: "{{ lookup('env', 'PWD') }}/kubeconfig"
     mode: '0600'
   delegate_to: localhost
+  become: false
+  run_once: true
