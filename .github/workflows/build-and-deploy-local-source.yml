@@ -29,6 +29,9 @@ jobs:
         run: |
           test -d "$SOURCE_DIR"
           test -d "$DOCKER_DIR"
+          test -f "$DOCKER_DIR/nf.Dockerfile"
+          test -f "$DOCKER_DIR/copybuild.sh"
+          test -f "$DOCKER_DIR/Makefile"
           ls -la "$SOURCE_DIR"
           ls -la "$DOCKER_DIR"
 
@@ -50,41 +53,62 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: Prepare build context
+        shell: bash
+        run: |
+          cd "$DOCKER_DIR"
+          chmod +x copybuild.sh
+          ./copybuild.sh
+
+      - name: Build and push base
+        shell: bash
+        run: |
+          cd "$DOCKER_DIR"
+          IMAGE="ghcr.io/${{ steps.vars.outputs.owner }}/b5gc-base"
+          TAG="${{ steps.vars.outputs.tag }}"
+          docker build --target b5gc-base -t "${IMAGE}:${TAG}" -t "${IMAGE}:latest" -f nf.Dockerfile .
+          docker push "${IMAGE}:${TAG}"
+          docker push "${IMAGE}:latest"
+
       - name: Build and push controller
         shell: bash
         run: |
+          cd "$DOCKER_DIR"
           IMAGE="ghcr.io/${{ steps.vars.outputs.owner }}/b5gc-controller"
           TAG="${{ steps.vars.outputs.tag }}"
-          docker build --target b5gc-controller -t "${IMAGE}:${TAG}" -t "${IMAGE}:latest" -f "$DOCKER_DIR/nf.Dockerfile" "$DOCKER_DIR"
+          docker build --build-arg B5GC_MODULE=controller -t "${IMAGE}:${TAG}" -t "${IMAGE}:latest" -f nf.Dockerfile .
           docker push "${IMAGE}:${TAG}"
           docker push "${IMAGE}:latest"
 
       - name: Build and push gateway
         shell: bash
         run: |
+          cd "$DOCKER_DIR"
           IMAGE="ghcr.io/${{ steps.vars.outputs.owner }}/b5gc-gateway"
           TAG="${{ steps.vars.outputs.tag }}"
-          docker build --target b5gc-gateway -t "${IMAGE}:${TAG}" -t "${IMAGE}:latest" -f "$DOCKER_DIR/nf.Dockerfile" "$DOCKER_DIR"
+          docker build --build-arg B5GC_MODULE=gateway -t "${IMAGE}:${TAG}" -t "${IMAGE}:latest" -f nf.Dockerfile .
           docker push "${IMAGE}:${TAG}"
           docker push "${IMAGE}:latest"
 
       - name: Build and push nsm
         shell: bash
         run: |
+          cd "$DOCKER_DIR"
           IMAGE="ghcr.io/${{ steps.vars.outputs.owner }}/b5gc-nsm"
           TAG="${{ steps.vars.outputs.tag }}"
-          docker build --target b5gc-nsm -t "${IMAGE}:${TAG}" -t "${IMAGE}:latest" -f "$DOCKER_DIR/nf.Dockerfile" "$DOCKER_DIR"
+          docker build --build-arg B5GC_MODULE=nsm -t "${IMAGE}:${TAG}" -t "${IMAGE}:latest" -f nf.Dockerfile .
           docker push "${IMAGE}:${TAG}"
           docker push "${IMAGE}:latest"
 
       - name: Build and push others
         shell: bash
         run: |
+          cd "$DOCKER_DIR"
           TAG="${{ steps.vars.outputs.tag }}"
           OWNER="${{ steps.vars.outputs.owner }}"
           for nf in ausf udm pcf damf amf smf; do
             IMAGE="ghcr.io/${OWNER}/b5gc-${nf}"
-            docker build --target b5gc-${nf} -t "${IMAGE}:${TAG}" -t "${IMAGE}:latest" -f "$DOCKER_DIR/nf.Dockerfile" "$DOCKER_DIR"
+            docker build --build-arg B5GC_MODULE=${nf} -t "${IMAGE}:${TAG}" -t "${IMAGE}:latest" -f nf.Dockerfile .
             docker push "${IMAGE}:${TAG}"
             docker push "${IMAGE}:latest"
           done
