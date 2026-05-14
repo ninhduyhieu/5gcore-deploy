@@ -6,14 +6,14 @@
     timeout: 120
 
 - name: Install Calico operator CRDs
-  command: kubectl --kubeconfig /etc/rancher/k3s/k3s.yaml create -f https://raw.githubusercontent.com/projectcalico/calico/v3.31.4/manifests/operator-crds.yaml
+  command: kubectl --kubeconfig /etc/rancher/k3s/k3s.yaml apply -f https://raw.githubusercontent.com/projectcalico/calico/v3.31.4/manifests/operator-crds.yaml
   retries: 3
   delay: 5
   register: result
   until: result.rc == 0
 
 - name: Install Calico tigera-operator
-  command: kubectl --kubeconfig /etc/rancher/k3s/k3s.yaml create -f https://raw.githubusercontent.com/projectcalico/calico/v3.31.4/manifests/tigera-operator.yaml
+  command: kubectl --kubeconfig /etc/rancher/k3s/k3s.yaml apply -f https://raw.githubusercontent.com/projectcalico/calico/v3.31.4/manifests/tigera-operator.yaml
   retries: 3
   delay: 5
   register: result
@@ -32,3 +32,4 @@
   until: "'Running' in calico_pods.stdout"
   retries: 30
   delay: 10
+  

@@ -29,6 +29,15 @@ spec:
               name: gateway-config
           ports:
             - containerPort: 7777
+          env:
+            - name: POD_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+            - name: POD_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
       serviceAccountName: gw-acc
 ---
 apiVersion: v1
@@ -71,8 +80,8 @@ data:
     {
       "registeredAddr": "192.168.58.11:30007",
       "controller": "ctrl-svc:8888",
-      "labels":{
-        "loc":"cluster1"
+      "labels": {
+        "loc": "cluster1"
       }
     }
 ---

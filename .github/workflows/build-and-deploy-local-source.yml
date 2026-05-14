@@ -33,6 +33,7 @@ jobs:
           ansible --version
           docker --version
           kubectl version --client
+          helm version
           test -d "$INFRA_DIR"
           test -d "$SOURCE_DIR"
           test -d "$DOCKER_DIR"
@@ -162,7 +163,7 @@ jobs:
           cd "$DOCKER_DIR"
           TAG="${{ steps.vars.outputs.tag }}"
           OWNER="${{ steps.vars.outputs.owner }}"
-          for nf in ausf udm pcf damf amf smf; do
+          for nf in ausf udm pcf damf amf smf pran; do
             IMAGE="ghcr.io/${OWNER}/b5gc-${nf}"
             docker build --build-arg B5GC_MODULE=${nf} -t "${IMAGE}:${TAG}" -t "${IMAGE}:latest" -f nf.Dockerfile .
             docker push "${IMAGE}:${TAG}"
@@ -195,6 +196,7 @@ jobs:
           kubectl apply -f rendered/nsm.yaml
           kubectl apply -f rendered/mongo.yaml
           kubectl apply -f rendered/deploy-other.yaml
+          kubectl apply -f rendered/pran.yaml
 
       - name: Verify pods
         shell: bash
@@ -211,3 +213,65 @@ jobs:
           cd "$INFRA_DIR"
           export KUBECONFIG="$INFRA_DIR/kubeconfig"
           kubectl get svc -n etri6g
+      - name: Deploy monitoring stack
+        shell: bash
+        run: |
+          set -e
+          export KUBECONFIG="$INFRA_DIR/kubeconfig"
+
+          # Tạo namespace observability nếu chưa có
+          kubectl create namespace observability --dry-run=client -o yaml | kubectl apply -f -
+
+          # Thêm helm repo grafana
+          helm repo add grafana https://grafana.github.io/helm-charts
+          helm repo update
+
+          # upgrade --install: cài mới nếu chưa có, update nếu đã có — idempotent
+          helm upgrade --install loki    grafana/loki    -n observability -f "$INFRA_DIR/observability/loki-values.yaml"    --wait --timeout 3m
+          helm upgrade --install alloy   grafana/alloy   -n observability -f "$INFRA_DIR/observability/alloy-values.yaml"   --wait --timeout 2m
+          helm upgrade --install grafana grafana/grafana -n observability -f "$INFRA_DIR/observability/grafana-values.yaml" --wait --timeout 2m
+
+          echo "Monitoring stack deployed"
+          kubectl get pods -n observability
+
+      - name: Restart WebUI backend
+        shell: bash
+        run: |
+          WEBUI_DIR="/home/hieu/Downloads/5gc-webui"
+
+          # Kill process cũ nếu đang chạy
+          pkill -f "uvicorn server:app" || true
+          sleep 2
+
+          # Start lại backend
+          cd "$WEBUI_DIR/backend"
+          export PATH="$PATH:/home/hieu/.local/bin"
+          export PROJECT_DIR="$INFRA_DIR"
+          export K8S_NAMESPACE=etri6g
+          nohup uvicorn server:app --host 0.0.0.0 --port 8000 > /tmp/webui-backend.log 2>&1 &
+          echo "WebUI backend started (PID $!)"
+
+          # Chờ backend sẵn sàng
+          for i in {1..10}; do
+            if curl -sf http://localhost:8000/api/status >/dev/null 2>&1; then
+              echo "Backend is up"
+              break
+            fi
+            echo "Waiting for backend... attempt $i/10"
+            sleep 2
+          done
+
+      - name: Restart WebUI frontend
+        shell: bash
+        run: |
+          WEBUI_DIR="/home/hieu/Downloads/5gc-webui"
+
+          # Kill process cũ nếu đang chạy
+          pkill -f "vite" || true
+          sleep 2
+
+          # Start lại frontend
+          cd "$WEBUI_DIR/frontend"
+          nohup npm run dev > /tmp/webui-frontend.log 2>&1 &
+          echo "WebUI frontend started (PID $!)"
+          echo "WebUI available at: http://localhost:3001"

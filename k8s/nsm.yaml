@@ -54,7 +54,6 @@ data:
           "slices": [
             {
               "home": {
-
                 "sd":"000001",
                 "sst":1
               },
@@ -123,7 +122,7 @@ data:
       ],
       "amfSets":[
         {
-          "setId":"10-100",       
+          "setId":"10-100",
           "slices": [
             {
               "sd":"010203",
@@ -169,8 +168,9 @@ data:
           "publicKey":        "0472DA71976234CE833A6907425867B82E074D44EF907DFB4B3E21C1C2256EBCD15A7DED52FCBB097A4ED250E036C7B9C8C7004C4EEDC4F068CD7BF8D3F900E3B4"
         }
       ],
+      "loglevel": "debug",
       "mesh": {
-      "registrar": "gateway-svc:7777",
+        "registrar": "gateway-svc:7777",
         "labels": {
           "plmnId": "001-01",
           "app": "nsm"
@@ -179,7 +179,7 @@ data:
     }
 
 ---
-# === SERVICES (Headless Services for NF Discovery) ===
+# === SERVICES ===
 apiVersion: v1
 kind: Service
 metadata:
@@ -293,6 +293,7 @@ spec:
     - protocol: TCP
       port: 9001
 ---
+# === SMF Slice 1 Service ===
 apiVersion: v1
 kind: Service
 metadata:
@@ -309,4 +310,21 @@ spec:
   ports:
     - protocol: TCP
       port: 9001
-
+---
+# === SMF Slice 2 Service ===
+apiVersion: v1
+kind: Service
+metadata:
+  name: smf-208-93-1-543210
+  namespace: etri6g
+  labels:
+    type: network-function
+spec:
+  clusterIP: None
+  selector:
+    app: smf
+    plmnId: 208-93
+    slice: 1-543210
+  ports:
+    - protocol: TCP
+      port: 9001

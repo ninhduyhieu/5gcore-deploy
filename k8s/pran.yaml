@@ -1,0 +1,98 @@
+# === PRAN — RAN Proxy, nhận NGAP từ StormSIM ===
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: pran-dep
+  namespace: etri6g
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: pran
+  template:
+    metadata:
+      labels:
+        app: pran
+        plmnId: 208-93
+    spec:
+      nodeSelector:
+        kubernetes.io/hostname: k3s-server-1
+      volumes:
+        - name: pran-config
+          configMap:
+            name: pran-config
+      containers:
+        - name: pran
+          image: b5gc-pran:latest
+          imagePullPolicy: IfNotPresent
+          command: ["/bin/sh", "-c"]
+          args: ["sleep 60 && ./pran -c /etc/config/pran.json"]
+          volumeMounts:
+            - mountPath: /etc/config
+              name: pran-config
+          ports:
+            - containerPort: 9001
+            - containerPort: 7001
+            - containerPort: 38412
+              protocol: SCTP
+          env:
+            - name: POD_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+            - name: POD_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: pran-config
+  namespace: etri6g
+data:
+  pran.json: |
+    {
+      "nfSelection": {
+        "gnb-loc": "daejeon"
+      },
+      "nasSplit": false,
+      "transportNetworks": ["tran1"],
+      "plmnId": {
+        "mcc": "001",
+        "mnc": "01"
+      },
+      "amfRegion": 10,
+      "loglevel": "debug",
+      "mesh": {
+        "registrar": "gateway-svc:7777",
+        "bind": "0.0.0.0",
+        "labels": {
+          "plmnId": "001-01",
+          "tac": "000001",
+          "app": "pran"
+        }
+      },
+      "ngapBinds": ["0.0.0.0"],
+      "ngapPort": 38412
+    }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: pran-svc
+  namespace: etri6g
+spec:
+  selector:
+    app: pran
+  type: NodePort
+  ports:
+    - name: sbi
+      protocol: TCP
+      port: 9001
+      targetPort: 9001
+    - name: ngap
+      protocol: SCTP
+      port: 38412
+      targetPort: 38412
+      nodePort: 30500
