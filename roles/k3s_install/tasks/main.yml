@@ -20,12 +20,17 @@
   args:
     creates: /usr/local/bin/k3s
 
+- name: Wait for server to recover SSH after k3s install (network may restart)
+  wait_for_connection:
+    delay: 15
+    timeout: 180
+
 - name: Wait for k3s API to be ready
   wait_for:
     port: 6443
     host: "{{ ansible_host }}"
     timeout: 120
-    delay: 10
+    delay: 5
 
 - name: Wait for token to be available
   wait_for:
