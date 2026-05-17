@@ -17,7 +17,6 @@ jobs:
     runs-on: [self-hosted, linux, x64]
 
     env:
-      PATH: /snap/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
       INFRA_DIR:    ${{ vars.INFRA_DIR    || '$HOME/5gcore-deploy' }}
       SOURCE_DIR:   ${{ vars.SOURCE_DIR   || '$HOME/Downloads/etrib5gc' }}
       DOCKER_DIR:   ${{ vars.DOCKER_DIR   || '$HOME/Downloads/etrib5gc/docker' }}
@@ -33,19 +32,22 @@ jobs:
       - name: Verify required tools and local source
         shell: bash
         run: |
-          set -e
-          export PATH="$PATH:/snap/bin"
+          set -ex
+          echo "PATH=$PATH"
           vagrant --version
           ansible --version
           docker --version
           kubectl version --client
-          helm version
-          test -d "$INFRA_DIR"
-          test -d "$SOURCE_DIR"
-          test -d "$DOCKER_DIR"
-          test -f "$DOCKER_DIR/nf.Dockerfile"
-          test -f "$DOCKER_DIR/copybuild.sh"
-          test -f "$DOCKER_DIR/Makefile"
+          helm version || /snap/helm/current/helm version || /usr/local/bin/helm version
+          echo "INFRA_DIR=$INFRA_DIR"
+          echo "SOURCE_DIR=$SOURCE_DIR"
+          echo "DOCKER_DIR=$DOCKER_DIR"
+          test -d "$INFRA_DIR"   || (echo "MISSING: $INFRA_DIR" && exit 1)
+          test -d "$SOURCE_DIR"  || (echo "MISSING: $SOURCE_DIR" && exit 1)
+          test -d "$DOCKER_DIR"  || (echo "MISSING: $DOCKER_DIR" && exit 1)
+          test -f "$DOCKER_DIR/nf.Dockerfile" || (echo "MISSING: nf.Dockerfile" && exit 1)
+          test -f "$DOCKER_DIR/copybuild.sh"  || (echo "MISSING: copybuild.sh" && exit 1)
+          test -f "$DOCKER_DIR/Makefile"      || (echo "MISSING: Makefile" && exit 1)
           ls -la "$SOURCE_DIR"
           ls -la "$DOCKER_DIR"
 
@@ -335,4 +337,3 @@ jobs:
           set -e
           chmod +x "$INFRA_DIR/run-test.sh"
           "$INFRA_DIR/run-test.sh"
-          
