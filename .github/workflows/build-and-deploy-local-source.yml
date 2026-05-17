@@ -17,9 +17,13 @@ jobs:
     runs-on: [self-hosted, linux, x64]
 
     env:
-      INFRA_DIR: /home/hieu/5gcore-deploy
-      SOURCE_DIR: /home/hieu/Downloads/etrib5gc
-      DOCKER_DIR: /home/hieu/Downloads/etrib5gc/docker
+      INFRA_DIR:    ${{ vars.INFRA_DIR    || '$HOME/5gcore-deploy' }}
+      SOURCE_DIR:   ${{ vars.SOURCE_DIR   || '$HOME/Downloads/etrib5gc' }}
+      DOCKER_DIR:   ${{ vars.DOCKER_DIR   || '$HOME/Downloads/etrib5gc/docker' }}
+      WEBUI_DIR:    ${{ vars.WEBUI_DIR    || '$HOME/Downloads/5gc-webui' }}
+      GTP5G_DIR:    ${{ vars.GTP5G_DIR    || '$HOME/gtp5g' }}
+      UPF_DIR:      ${{ vars.UPF_DIR      || '$HOME/Downloads/etrib5gc' }}
+      STORMSIM_DIR: ${{ vars.STORMSIM_DIR || '$HOME/Downloads/stormsim' }}
 
     steps:
       - name: Checkout infra repo
@@ -198,6 +202,17 @@ jobs:
           kubectl apply -f rendered/deploy-other.yaml
           kubectl apply -f rendered/pran.yaml
 
+          # Chờ tất cả pod Running trước khi tiếp tục
+          kubectl rollout status deployment/ctrl-dep        -n etri6g --timeout=120s
+          kubectl rollout status deployment/gateway-dep     -n etri6g --timeout=120s
+          kubectl rollout status deployment/nsm-dep         -n etri6g --timeout=120s
+          kubectl rollout status deployment/damf-dep        -n etri6g --timeout=120s
+          kubectl rollout status deployment/amf-10-100-agent1-dep -n etri6g --timeout=120s
+          kubectl rollout status deployment/amf-10-100-agent2-dep -n etri6g --timeout=120s
+          kubectl rollout status deployment/pran-dep        -n etri6g --timeout=120s
+          kubectl rollout status deployment/smf-slice1-dep   -n etri6g --timeout=120s
+          kubectl rollout status deployment/smf-slice2-dep   -n etri6g --timeout=120s
+
       - name: Verify pods
         shell: bash
         run: |
@@ -237,7 +252,7 @@ jobs:
       - name: Restart WebUI backend
         shell: bash
         run: |
-          WEBUI_DIR="/home/hieu/Downloads/5gc-webui"
+          WEBUI_DIR="${WEBUI_DIR}"
 
           # Kill process cũ nếu đang chạy
           pkill -f "uvicorn server:app" || true
@@ -245,7 +260,7 @@ jobs:
 
           # Start lại backend
           cd "$WEBUI_DIR/backend"
-          export PATH="$PATH:/home/hieu/.local/bin"
+          export PATH="$PATH:$HOME/.local/bin"
           export PROJECT_DIR="$INFRA_DIR"
           export K8S_NAMESPACE=etri6g
           nohup uvicorn server:app --host 0.0.0.0 --port 8000 > /tmp/webui-backend.log 2>&1 &
@@ -264,7 +279,7 @@ jobs:
       - name: Restart WebUI frontend
         shell: bash
         run: |
-          WEBUI_DIR="/home/hieu/Downloads/5gc-webui"
+          WEBUI_DIR="${WEBUI_DIR}"
 
           # Kill process cũ nếu đang chạy
           pkill -f "vite" || true
@@ -275,3 +290,47 @@ jobs:
           nohup npm run dev > /tmp/webui-frontend.log 2>&1 &
           echo "WebUI frontend started (PID $!)"
           echo "WebUI available at: http://localhost:3001"
+
+
+      - name: Ensure UPF ready
+        shell: bash
+        run: |
+          # Kiểm tra gtp5g kernel module
+          KERNEL_VER=$(uname -r)
+          if ! lsmod | grep -q gtp5g; then
+            echo "Loading gtp5g for kernel $KERNEL_VER..."
+            if ! sudo modprobe gtp5g 2>/dev/null; then
+              echo "Build gtp5g from source..."
+              cd "$GTP5G_DIR"
+              make clean && make
+              sudo insmod gtp5g.ko
+            fi
+          fi
+
+          if ! lsmod | grep -q gtp5g; then
+            echo "ERROR: gtp5g failed to load"
+            exit 1
+          fi
+          echo "✓ gtp5g loaded"
+
+          # Kiểm tra UPF process
+          if ! pgrep -x "upf" > /dev/null; then
+            echo "Starting UPF..."
+            cd "$UPF_DIR"
+            sudo nohup bin/upf -c config/upf.json > /tmp/upf.log 2>&1 &
+            sleep 30
+            if ! pgrep -x "upf" > /dev/null; then
+              echo "ERROR: UPF failed to start"
+              tail -10 /tmp/upf.log
+              exit 1
+            fi
+          fi
+          echo "✓ UPF running (PID: $(pgrep -x upf))"
+
+      - name: Run 5G Core test
+        shell: bash
+        run: |
+          set -e
+          chmod +x "$INFRA_DIR/run-test.sh"
+          "$INFRA_DIR/run-test.sh"
+          
