@@ -17,37 +17,45 @@ jobs:
     runs-on: [self-hosted, linux, x64]
 
     env:
-      INFRA_DIR:    ${{ vars.INFRA_DIR    || '$HOME/5gcore-deploy' }}
-      SOURCE_DIR:   ${{ vars.SOURCE_DIR   || '$HOME/Downloads/etrib5gc' }}
-      DOCKER_DIR:   ${{ vars.DOCKER_DIR   || '$HOME/Downloads/etrib5gc/docker' }}
-      WEBUI_DIR:    ${{ vars.WEBUI_DIR    || '$HOME/Downloads/5gc-webui' }}
-      GTP5G_DIR:    ${{ vars.GTP5G_DIR    || '$HOME/gtp5g' }}
-      UPF_DIR:      ${{ vars.UPF_DIR      || '$HOME/Downloads/etrib5gc' }}
-      STORMSIM_DIR: ${{ vars.STORMSIM_DIR || '$HOME/Downloads/stormsim' }}
+      INFRA_DIR:    ${{ vars.INFRA_DIR    || '' }}
+      SOURCE_DIR:   ${{ vars.SOURCE_DIR   || '' }}
+      DOCKER_DIR:   ${{ vars.DOCKER_DIR   || '' }}
+      WEBUI_DIR:    ${{ vars.WEBUI_DIR    || '' }}
+      GTP5G_DIR:    ${{ vars.GTP5G_DIR    || '' }}
+      UPF_DIR:      ${{ vars.UPF_DIR      || '' }}
+      STORMSIM_DIR: ${{ vars.STORMSIM_DIR || '' }}
 
     steps:
       - name: Checkout infra repo
         uses: actions/checkout@v4
 
+      - name: Resolve paths
+        shell: bash
+        run: |
+          # Resolve $HOME-based defaults nếu vars.* chưa được set
+          echo "INFRA_DIR=${INFRA_DIR:-$HOME/5gcore-deploy}"       >> $GITHUB_ENV
+          echo "SOURCE_DIR=${SOURCE_DIR:-$HOME/Downloads/etrib5gc}" >> $GITHUB_ENV
+          echo "DOCKER_DIR=${DOCKER_DIR:-$HOME/Downloads/etrib5gc/docker}" >> $GITHUB_ENV
+          echo "WEBUI_DIR=${WEBUI_DIR:-$HOME/Downloads/5gc-webui}" >> $GITHUB_ENV
+          echo "GTP5G_DIR=${GTP5G_DIR:-$HOME/gtp5g}"               >> $GITHUB_ENV
+          echo "UPF_DIR=${UPF_DIR:-$HOME/Downloads/etrib5gc}"      >> $GITHUB_ENV
+          echo "STORMSIM_DIR=${STORMSIM_DIR:-$HOME/Downloads/stormsim}" >> $GITHUB_ENV
+
       - name: Verify required tools and local source
         shell: bash
         run: |
-          set -ex
-          echo "PATH=$PATH"
+          set -e
           vagrant --version
           ansible --version
           docker --version
           kubectl version --client
-          helm version || /snap/helm/current/helm version || /usr/local/bin/helm version
-          echo "INFRA_DIR=$INFRA_DIR"
-          echo "SOURCE_DIR=$SOURCE_DIR"
-          echo "DOCKER_DIR=$DOCKER_DIR"
-          test -d "$INFRA_DIR"   || (echo "MISSING: $INFRA_DIR" && exit 1)
-          test -d "$SOURCE_DIR"  || (echo "MISSING: $SOURCE_DIR" && exit 1)
-          test -d "$DOCKER_DIR"  || (echo "MISSING: $DOCKER_DIR" && exit 1)
-          test -f "$DOCKER_DIR/nf.Dockerfile" || (echo "MISSING: nf.Dockerfile" && exit 1)
-          test -f "$DOCKER_DIR/copybuild.sh"  || (echo "MISSING: copybuild.sh" && exit 1)
-          test -f "$DOCKER_DIR/Makefile"      || (echo "MISSING: Makefile" && exit 1)
+          helm version
+          test -d "$INFRA_DIR"
+          test -d "$SOURCE_DIR"
+          test -d "$DOCKER_DIR"
+          test -f "$DOCKER_DIR/nf.Dockerfile"
+          test -f "$DOCKER_DIR/copybuild.sh"
+          test -f "$DOCKER_DIR/Makefile"
           ls -la "$SOURCE_DIR"
           ls -la "$DOCKER_DIR"
 
