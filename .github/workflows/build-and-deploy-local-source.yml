@@ -71,16 +71,26 @@ jobs:
         run: |
           set -e
           cd "$INFRA_DIR"
-          for i in {1..20}; do
-            if ansible -i inventory/hosts.yaml all -m ping >/dev/null 2>&1; then
-              echo "All nodes are reachable"
-              exit 0
-            fi
-            echo "Waiting for nodes SSH... attempt $i/20"
-            sleep 15
+          NODES="192.168.58.11 192.168.58.12 192.168.58.13"
+          KEY=~/.vagrant.d/insecure_private_keys/vagrant.key.rsa
+
+          # Chờ từng node SSH ready riêng lẻ
+          for NODE in $NODES; do
+            echo "Waiting for $NODE..."
+            for i in {1..40}; do
+              if ssh -o StrictHostKeyChecking=no -o ConnectTimeout=5                    -i "$KEY" vagrant@$NODE "echo ok" >/dev/null 2>&1; then
+                echo "$NODE is reachable"
+                break
+              fi
+              if [ $i -eq 40 ]; then
+                echo "ERROR: $NODE not reachable after 40 attempts"
+                exit 1
+              fi
+              echo "  attempt $i/40..."
+              sleep 15
+            done
           done
-          echo "Nodes did not become reachable in time"
-          exit 1
+          echo "All nodes are reachable" 
 
       - name: Run Ansible playbook with retry
         shell: bash
@@ -345,3 +355,4 @@ jobs:
           set -e
           chmod +x "$INFRA_DIR/run-test.sh"
           "$INFRA_DIR/run-test.sh"
+          
