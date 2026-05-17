@@ -64,6 +64,18 @@ jobs:
         run: |
           set -e
           cd "$INFRA_DIR"
+
+          # Fix aborted VMs trước khi up
+          for vm in k3s-server-1 k3s-agent-1 k3s-agent-2; do
+            state=$(vagrant status $vm 2>/dev/null | grep "$vm" | awk '{print $2}')
+            echo "$vm: $state"
+            if [ "$state" = "aborted" ]; then
+              echo "Force halting aborted VM: $vm"
+              vagrant halt $vm --force || true
+              sleep 3
+            fi
+          done
+
           vagrant up --no-parallel
 
       - name: Wait for all nodes SSH to become reachable
