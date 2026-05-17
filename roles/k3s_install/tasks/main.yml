@@ -20,6 +20,13 @@
   args:
     creates: /usr/local/bin/k3s
 
+- name: Wait for k3s API to be ready
+  wait_for:
+    port: 6443
+    host: "{{ ansible_host }}"
+    timeout: 120
+    delay: 10
+
 - name: Wait for token to be available
   wait_for:
     path: /var/lib/rancher/k3s/server/node-token
@@ -30,9 +37,21 @@
     src: /var/lib/rancher/k3s/server/node-token
   register: token_raw
 
-- name: Set K3s token as fact
+- name: Set K3s token as fact (in-memory)
   set_fact:
     k3s_token: "{{ token_raw['content'] | b64decode | trim }}"
+
+- name: Save K3s token to shared file for agents
+  copy:
+    content: "{{ token_raw['content'] | b64decode | trim }}"
+    dest: /tmp/k3s-node-token
+    mode: '0644'
+
+- name: Fetch token file to control machine
+  fetch:
+    src: /tmp/k3s-node-token
+    dest: /tmp/k3s-node-token
+    flat: yes
 
 - name: Enable k3s service
   systemd:
