@@ -3,7 +3,7 @@ IMAGE_VER  = "0.0.1"
 
 SERVER_NUM = 1
 SERVER_CPU = 4
-SERVER_MEM = 7168
+SERVER_MEM = 4096
 
 AGENT_NUM  = 2
 AGENT_CPU  = 4
@@ -15,6 +15,7 @@ VAGRANT_DISABLE_VBOXSYMLINKCREATE = 1
 
 Vagrant.configure("2") do |config|
   config.ssh.insert_key = false
+  config.vm.boot_timeout = 900
 
   (1..SERVER_NUM).each do |i|
     config.vm.define "k3s-server-#{i}" do |server|
