@@ -64,7 +64,7 @@ jobs:
         run: |
           set -e
           cd "$INFRA_DIR"
-          vagrant up
+          vagrant up --no-parallel
 
       - name: Wait for all nodes SSH to become reachable
         shell: bash
@@ -302,3 +302,4 @@ jobs:
           nohup npm run dev > /tmp/webui-frontend.log 2>&1 &
           echo "WebUI frontend started (PID $!)"
           echo "WebUI available at: http://localhost:3001"
+          
