@@ -17,6 +17,7 @@ jobs:
     runs-on: [self-hosted, linux, x64]
 
     env:
+      PATH: /snap/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
       INFRA_DIR:    ${{ vars.INFRA_DIR    || '$HOME/5gcore-deploy' }}
       SOURCE_DIR:   ${{ vars.SOURCE_DIR   || '$HOME/Downloads/etrib5gc' }}
       DOCKER_DIR:   ${{ vars.DOCKER_DIR   || '$HOME/Downloads/etrib5gc/docker' }}
@@ -33,6 +34,7 @@ jobs:
         shell: bash
         run: |
           set -e
+          export PATH="$PATH:/snap/bin"
           vagrant --version
           ansible --version
           docker --version
