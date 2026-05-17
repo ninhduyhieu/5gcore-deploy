@@ -5,15 +5,15 @@
     host: 127.0.0.1
     timeout: 120
 
-- name: Install Calico operator CRDs
-  command: kubectl --kubeconfig /etc/rancher/k3s/k3s.yaml apply -f https://raw.githubusercontent.com/projectcalico/calico/v3.31.4/manifests/operator-crds.yaml
+- name: Install Calico operator CRDs (server-side apply)
+  command: kubectl --kubeconfig /etc/rancher/k3s/k3s.yaml apply --server-side --force-conflicts -f https://raw.githubusercontent.com/projectcalico/calico/v3.31.4/manifests/operator-crds.yaml
   retries: 3
   delay: 5
   register: result
   until: result.rc == 0
 
-- name: Install Calico tigera-operator
-  command: kubectl --kubeconfig /etc/rancher/k3s/k3s.yaml apply -f https://raw.githubusercontent.com/projectcalico/calico/v3.31.4/manifests/tigera-operator.yaml
+- name: Install Calico tigera-operator (server-side apply)
+  command: kubectl --kubeconfig /etc/rancher/k3s/k3s.yaml apply --server-side --force-conflicts -f https://raw.githubusercontent.com/projectcalico/calico/v3.31.4/manifests/tigera-operator.yaml
   retries: 3
   delay: 5
   register: result
