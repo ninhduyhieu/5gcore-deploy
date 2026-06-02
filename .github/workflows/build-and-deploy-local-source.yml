@@ -275,20 +275,32 @@ jobs:
         run: |
           set -e
           echo "Checking cluster node status..."
-          for i in {1..18}; do
-            NOT_READY=$(kubectl get nodes --no-headers 2>/dev/null | grep -v " Ready" | wc -l || echo "1")
+          export KUBECONFIG="$INFRA_DIR/kubeconfig"
+          
+          for i in {1..25}; do
+            # Đếm tổng số node hiện có
             TOTAL_NODES=$(kubectl get nodes --no-headers 2>/dev/null | wc -l || echo "0")
             
-            if [ "$TOTAL_NODES" -gt 0 ] && [ "$NOT_READY" -eq 0 ]; then
-              echo "✓ All $TOTAL_NODES node(s) are Ready!"
-              kubectl get nodes
+            # Đếm số node có chứa chữ "Ready" (không tính NotReady)
+            READY_NODES=$(kubectl get nodes --no-headers 2>/dev/null | grep -E "\bReady\b" | wc -l || echo "0")
+            
+            echo "Loop ($i/25): Total nodes registered = $TOTAL_NODES, Nodes Ready = $READY_NODES"
+            
+            # Điều kiện: Phải tìm đủ ít nhất 3 node và cả 3 node đều phải Ready
+            if [ "$TOTAL_NODES" -ge 3 ] && [ "$READY_NODES" -eq "$TOTAL_NODES" ]; then
+              echo "✓ All $TOTAL_NODES nodes are successfully Ready!"
+              kubectl get nodes -o wide
               exit 0
             fi
-            echo "Waiting for all nodes to become Ready... ($i/18) - Current total: $TOTAL_NODES node(s)"
-            sleep 10
+            
+            sleep 12
           done
-          echo "✗ Timeout: Cluster nodes are not completely Ready."
-          kubectl get nodes
+
+          echo "✗ Timeout: Cluster nodes are still NOT completely Ready."
+          echo "=== CURRENT NODES STATUS ==="
+          kubectl get nodes -o wide
+          echo "=== SYSTEM PODS STATUS (Đoán bệnh vì sao NotReady) ==="
+          kubectl get pods -n kube-system
           exit 1
 
       - name: "[Pre-test 2] Validate nodeSelector against real nodes"
