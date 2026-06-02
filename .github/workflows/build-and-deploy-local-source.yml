@@ -220,6 +220,20 @@ jobs:
             echo "Waiting... $i/40"; sleep 15
           done; exit 1
 
+      # ── GIẢI PHÓNG APT LOCK CHỐNG KẸT ANSIBLE ──────────────
+      - name: "[Fix] Force release APT lock on target VMs"
+        if: |
+          github.event_name == 'workflow_dispatch' ||
+          needs.detect-changes.outputs.need_ansible == 'true'
+        shell: bash
+        run: |
+          cd "$INFRA_DIR"
+          echo "Cưỡng bức giải phóng file lock của hệ thống APT để tránh kẹt Ansible..."
+          for vm in k3s-server-1 k3s-agent-1 k3s-agent-2; do
+            echo "Clearing APT lock on $vm..."
+            vagrant ssh $vm -c "sudo killall -9 apt-get apt dpkg 2>/dev/null || true; sudo rm -f /var/lib/dpkg/lock-frontend /var/lib/apt/lists/lock /var/lib/dpkg/lock" || true
+          done
+
       # ── ANSIBLE ──────────────────────────────────────────
       - name: "[Ansible] Run playbook with retry"
         if: |
@@ -233,6 +247,17 @@ jobs:
             sleep 20
             ansible-playbook -i inventory/hosts.yaml playbook.yml
           }
+
+      # ── ÉP CARD MẠNG ETH1 CHO CALICO ĐỂ NODE READY ────────
+      - name: "[Fix] Configure Calico Network Interface to eth1"
+        if: |
+          github.event_name == 'workflow_dispatch' ||
+          needs.detect-changes.outputs.need_ansible == 'true'
+        shell: bash
+        run: |
+          export KUBECONFIG="$INFRA_DIR/kubeconfig"
+          echo "Ép cấu hình Calico sử dụng đúng card mạng nội bộ eth1 của Vagrant..."
+          kubectl set env daemonset/calico-node -n kube-system IP_AUTODETECTION_METHOD=interface=eth1 || true
 
       - name: "[Ansible] Verify cluster"
         if: |
@@ -270,25 +295,31 @@ jobs:
           echo "INFRA_DIR=${INFRA_DIR:-$HOME/5gcore-deploy}" >> $GITHUB_ENV
           echo "KUBECONFIG=${INFRA_DIR:-$HOME/5gcore-deploy}/kubeconfig" >> $GITHUB_ENV
 
+      # Bản vá: Đếm tổng số node và số lượng Ready thực tế không dính lỗi cú pháp
       - name: "[Pre-test 1] Wait for cluster nodes to be Ready"
         shell: bash
         run: |
           set -e
           echo "Checking cluster node status..."
-          for i in {1..18}; do
-            NOT_READY=$(kubectl get nodes --no-headers 2>/dev/null | grep -v " Ready" | wc -l || echo "1")
+          export KUBECONFIG="$INFRA_DIR/kubeconfig"
+          
+          for i in {1..25}; do
             TOTAL_NODES=$(kubectl get nodes --no-headers 2>/dev/null | wc -l || echo "0")
+            READY_NODES=$(kubectl get nodes --no-headers 2>/dev/null | grep -E "\bReady\b" | wc -l || echo "0")
             
-            if [ "$TOTAL_NODES" -gt 0 ] && [ "$NOT_READY" -eq 0 ]; then
-              echo "✓ All $TOTAL_NODES node(s) are Ready!"
-              kubectl get nodes
+            echo "Waiting for all nodes to become Ready... ($i/25) - Total registered: $TOTAL_NODES, Ready: $READY_NODES"
+            
+            if [ "$TOTAL_NODES" -ge 3 ] && [ "$READY_NODES" -eq "$TOTAL_NODES" ]; then
+              echo "✓ All $TOTAL_NODES nodes are successfully Ready!"
+              kubectl get nodes -o wide
               exit 0
             fi
-            echo "Waiting for all nodes to become Ready... ($i/18) - Current total: $TOTAL_NODES node(s)"
-            sleep 10
+            sleep 12
           done
+
           echo "✗ Timeout: Cluster nodes are not completely Ready."
-          kubectl get nodes
+          kubectl get nodes -o wide
+          kubectl get pods -n kube-system
           exit 1
 
       - name: "[Pre-test 2] Validate nodeSelector against real nodes"
@@ -296,6 +327,7 @@ jobs:
         run: |
           set -e
           FAILED=0
+          export KUBECONFIG="$INFRA_DIR/kubeconfig"
           REAL_NODES=$(kubectl get nodes --no-headers -o custom-columns=NAME:.metadata.name)
           DECLARED=$(grep -rh "kubernetes.io/hostname:" k8s/ | awk '{print $2}' | sort -u)
           for node in $DECLARED; do
@@ -331,6 +363,7 @@ jobs:
       - name: "[Pre-test 4] Check NodePorts not conflicting"
         shell: bash
         run: |
+          export KUBECONFIG="$INFRA_DIR/kubeconfig"
           MASTER_IP="192.168.58.11"
           for port in 30007 30008 30500; do
             SVC=$(kubectl get svc -A --no-headers \
@@ -522,6 +555,7 @@ jobs:
             ctrl-dep gateway-dep nsm-dep damf-dep \
             amf-10-100-agent1-dep amf-10-100-agent2-dep \
             smf-slice1-dep smf-slice2-dep pran-dep; do
+            echo "Waiting $dep..."
             kubectl rollout status deployment/$dep -n etri6g --timeout=180s
           done
 
@@ -600,6 +634,7 @@ jobs:
         run: |
           set -e
           FAILED=0
+          export KUBECONFIG="$INFRA_DIR/kubeconfig"
           DEPS=(ctrl-dep gateway-dep nsm-dep ausf-dep udm-dep pcf-dep damf-dep amf-10-100-agent1-dep amf-10-100-agent2-dep smf-slice1-dep smf-slice2-dep pran-dep)
           for dep in "${DEPS[@]}"; do
             READY=$(kubectl get deployment/$dep -n etri6g -o jsonpath='{.status.readyReplicas}' 2>/dev/null || echo "0")
@@ -619,6 +654,7 @@ jobs:
         run: |
           set -e
           FAILED=0
+          export KUBECONFIG="$INFRA_DIR/kubeconfig"
           check() {
             local label=$1 expected=$2
             actual=$(kubectl get pods -n etri6g -l "app=${label}" --no-headers -o wide 2>/dev/null | awk '{print $7}' | head -1)
@@ -665,6 +701,7 @@ jobs:
         id: verify_mesh
         shell: bash
         run: |
+          export KUBECONFIG="$INFRA_DIR/kubeconfig"
           GW_POD=$(kubectl get pods -n etri6g -l app=gateway --no-headers | awk '{print $1}' | head -1)
           echo "Gateway pod: $GW_POD"
           echo "=== Gateway log (tail 30) ==="
@@ -679,6 +716,7 @@ jobs:
           )
         shell: bash
         run: |
+          export KUBECONFIG="$INFRA_DIR/kubeconfig"
           echo "⚠ Verify failed — rolling back all deployments..."
           for dep in \
             ctrl-dep gateway-dep nsm-dep damf-dep \
@@ -715,3 +753,11 @@ jobs:
           echo "  deploy          : ${{ needs.build-deploy.result }}"
           echo "  post-verify     : ${{ needs.post-deploy-verify.result }}"
           echo "========================================"
+          
+          if [ "${{ needs.validate.result }}" = "failure" ] || \
+             [ "${{ needs.provision-infra.result }}" = "failure" ] || \
+             [ "${{ needs.pre-deploy-test.result }}" = "failure" ] || \
+             [ "${{ needs.build-deploy.result }}" = "failure" ] || \
+             [ "${{ needs.post-deploy-verify.result }}" = "failure" ]; then
+            exit 1
+          fi
