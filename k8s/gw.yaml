@@ -99,3 +99,4 @@ spec:
       targetPort: 7777
       nodePort: 30007
   type: NodePort
+  
