@@ -43,7 +43,6 @@ jobs:
         id: detect
         shell: bash
         run: |
-          # Nếu chạy bằng tay, ép buộc tất cả các biến thành true
           if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
             echo "→ Manual trigger: Force run everything"
             echo "need_provision=true"   >> $GITHUB_OUTPUT
@@ -55,7 +54,6 @@ jobs:
             exit 0
           fi
 
-          # Nếu là sự kiện PUSH code, mới check diff cụ thể
           CHANGED=$(git diff --name-only HEAD~1 HEAD 2>/dev/null || echo "")
           echo "Changed files:"
           echo "$CHANGED"
@@ -66,7 +64,6 @@ jobs:
           PROVISION=false ANSIBLE=false BUILD=false DEPLOY=false MONITORING=false
 
           if [ -z "$CHANGED" ]; then
-            # Đề phòng push commit đầu tiên hoặc không lấy được diff, mặc định cho chạy hết để an toàn
             PROVISION=true; ANSIBLE=true; BUILD=true; DEPLOY=true; MONITORING=true
           elif has_change '^Vagrantfile$'; then
             PROVISION=true; ANSIBLE=true; BUILD=true; DEPLOY=true; MONITORING=true
@@ -188,6 +185,8 @@ jobs:
           vagrant --version && ansible --version
           docker --version  && kubectl version --client && helm version
           test -d "$INFRA_DIR" && test -d "$DOCKER_DIR"
+          test -f "$DOCKER_DIR/nf.Dockerfile"
+          test -f "$DOCKER_DIR/copybuild.sh"
 
       # ── PROVISION ────────────────────────────────────────
       - name: "[Provision] Vagrant up"
@@ -231,7 +230,7 @@ jobs:
           set -e
           cd "$INFRA_DIR"
           ansible-playbook -i inventory/hosts.yaml playbook.yml || {
-            sleep 10
+            sleep 20
             ansible-playbook -i inventory/hosts.yaml playbook.yml
           }
 
@@ -245,7 +244,7 @@ jobs:
           kubectl get nodes -o wide
 
   # ════════════════════════════════════════════════════
-  # JOB 3 · CI: TEST (dry-run)
+  # JOB 3 · CI: TEST (dry-run) — Chạy trước khi deploy
   # ════════════════════════════════════════════════════
   pre-deploy-test:
     name: "CI · Pre-deploy test (dry-run on cluster)"
@@ -271,35 +270,77 @@ jobs:
           echo "INFRA_DIR=${INFRA_DIR:-$HOME/5gcore-deploy}" >> $GITHUB_ENV
           echo "KUBECONFIG=${INFRA_DIR:-$HOME/5gcore-deploy}/kubeconfig" >> $GITHUB_ENV
 
-      - name: "[Pre-test 1] Cluster nodes all Ready"
+      - name: "[Pre-test 1] Wait for cluster nodes to be Ready"
         shell: bash
         run: |
           set -e
-          NOT_READY=$(kubectl get nodes --no-headers | grep -v " Ready" | wc -l)
-          if [ "$NOT_READY" -gt 0 ]; then
-            exit 1
-          fi
+          echo "Checking cluster node status..."
+          for i in {1..18}; do
+            NOT_READY=$(kubectl get nodes --no-headers 2>/dev/null | grep -v " Ready" | wc -l || echo "1")
+            TOTAL_NODES=$(kubectl get nodes --no-headers 2>/dev/null | wc -l || echo "0")
+            
+            if [ "$TOTAL_NODES" -gt 0 ] && [ "$NOT_READY" -eq 0 ]; then
+              echo "✓ All $TOTAL_NODES node(s) are Ready!"
+              kubectl get nodes
+              exit 0
+            fi
+            echo "Waiting for all nodes to become Ready... ($i/18) - Current total: $TOTAL_NODES node(s)"
+            sleep 10
+          done
+          echo "✗ Timeout: Cluster nodes are not completely Ready."
+          kubectl get nodes
+          exit 1
 
-      - name: "[Pre-test 2] Validate nodeSelector"
+      - name: "[Pre-test 2] Validate nodeSelector against real nodes"
         shell: bash
         run: |
           set -e
+          FAILED=0
           REAL_NODES=$(kubectl get nodes --no-headers -o custom-columns=NAME:.metadata.name)
           DECLARED=$(grep -rh "kubernetes.io/hostname:" k8s/ | awk '{print $2}' | sort -u)
           for node in $DECLARED; do
-            echo "$REAL_NODES" | grep -q "^${node}$" || exit 1
+            if echo "$REAL_NODES" | grep -q "^${node}$"; then
+              echo "✓ $node exists in cluster"
+            else
+              echo "✗ $node declared in manifest but NOT found in cluster"
+              FAILED=$((FAILED+1))
+            fi
           done
+          [ "$FAILED" -eq 0 ] || exit 1
 
-      - name: "[Pre-test 3] Dry-run apply"
+      - name: "[Pre-test 3] Dry-run apply all manifests on real cluster"
         shell: bash
         run: |
           set -e
+          FAILED=0
           export KUBECONFIG="$INFRA_DIR/kubeconfig"
           kubectl create namespace etri6g-dryrun --dry-run=client -o yaml | kubectl apply -f -
-          for f in k8s/ctrl.yaml k8s/gw.yaml k8s/nsm.yaml k8s/mongo.yaml k8s/deploy-other.yaml k8s/pran.yaml; do
-            kubectl apply --server-side --dry-run=server --namespace=etri6g-dryrun -f "$f"
+          for f in k8s/ctrl.yaml k8s/gw.yaml k8s/nsm.yaml \
+                   k8s/mongo.yaml k8s/deploy-other.yaml k8s/pran.yaml; do
+            if kubectl apply --server-side --dry-run=server \
+                --namespace=etri6g-dryrun -f "$f" 2>&1; then
+              echo "✓ $f OK"
+            else
+              echo "✗ $f FAILED dry-run"
+              FAILED=$((FAILED+1))
+            fi
           done
           kubectl delete namespace etri6g-dryrun --ignore-not-found=true
+          [ "$FAILED" -eq 0 ] || exit 1
+
+      - name: "[Pre-test 4] Check NodePorts not conflicting"
+        shell: bash
+        run: |
+          MASTER_IP="192.168.58.11"
+          for port in 30007 30008 30500; do
+            SVC=$(kubectl get svc -A --no-headers \
+              | awk -v p="$port" '$0 ~ p {print $2}' | head -1)
+            if [ -n "$SVC" ]; then
+              echo "✓ Port $port đang được dùng bởi: $SVC"
+            else
+              echo "ℹ Port $port chưa bị chiếm."
+            fi
+          done
 
   # ════════════════════════════════════════════════════
   # JOB 4 · CD: BUILD AND DEPLOY
@@ -318,6 +359,9 @@ jobs:
       SOURCE_DIR: ${{ vars.SOURCE_DIR   || '' }}
       DOCKER_DIR: ${{ vars.DOCKER_DIR   || '' }}
       WEBUI_DIR: ${{ vars.WEBUI_DIR    || '' }}
+      GTP5G_DIR: ${{ vars.GTP5G_DIR    || '' }}
+      UPF_DIR: ${{ vars.UPF_DIR      || '' }}
+      STORMSIM_DIR: ${{ vars.STORMSIM_DIR || '' }}
     steps:
       - name: Checkout infra repo
         uses: actions/checkout@v4
@@ -328,7 +372,11 @@ jobs:
         run: |
           if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
             OWNER="${{ inputs.image_owner }}"
-            TAG="${{ inputs.image_tag == 'latest' && 'manual-latest' || inputs.image_tag }}"
+            if [ "${{ inputs.image_tag }}" = "latest" ]; then
+              TAG="manual-$(date +%Y%m%d-%H%M%S)"
+            else
+              TAG="${{ inputs.image_tag }}"
+            fi
           else
             OWNER="ninhduyhieu"
             TAG="sha-$(echo ${{ github.sha }} | cut -c1-7)"
@@ -336,7 +384,19 @@ jobs:
           echo "owner=${OWNER}" >> $GITHUB_OUTPUT
           echo "tag=${TAG}"     >> $GITHUB_OUTPUT
 
+      - name: Verify required tools and source
+        shell: bash
+        run: |
+          set -e
+          test -d "$INFRA_DIR" && test -d "$DOCKER_DIR"
+          test -f "$DOCKER_DIR/nf.Dockerfile"
+          test -f "$DOCKER_DIR/copybuild.sh"
+
+      # ── BUILD ─────────────────────────────────────────────
       - name: "[Build] Login to GHCR"
+        if: |
+          github.event_name == 'workflow_dispatch' ||
+          needs.detect-changes.outputs.need_build == 'true'
         uses: docker/login-action@v3
         with:
           registry: ghcr.io
@@ -344,81 +404,314 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: "[Build] Prepare build context"
+        if: |
+          github.event_name == 'workflow_dispatch' ||
+          needs.detect-changes.outputs.need_build == 'true'
         shell: bash
         run: |
-          cd "$DOCKER_DIR"
+          set -e; cd "$DOCKER_DIR"
           chmod +x copybuild.sh && ./copybuild.sh
 
-      - name: "[Build] Build and push modules"
+      - name: "[Build] Build and push base image"
+        if: |
+          github.event_name == 'workflow_dispatch' ||
+          needs.detect-changes.outputs.need_build == 'true'
+        shell: bash
+        run: |
+          set -e; cd "$DOCKER_DIR"
+          IMAGE="ghcr.io/${{ steps.vars.outputs.owner }}/b5gc-base"
+          TAG="${{ steps.vars.outputs.tag }}"
+          docker build --target b5gc-base -t "${IMAGE}:${TAG}" -t "${IMAGE}:latest" -f nf.Dockerfile .
+          docker push "${IMAGE}:${TAG}" && docker push "${IMAGE}:latest"
+
+      - name: "[Build] Build and push controller"
+        if: |
+          github.event_name == 'workflow_dispatch' ||
+          needs.detect-changes.outputs.need_build == 'true'
+        shell: bash
+        run: |
+          set -e; cd "$DOCKER_DIR"
+          IMAGE="ghcr.io/${{ steps.vars.outputs.owner }}/b5gc-controller"
+          TAG="${{ steps.vars.outputs.tag }}"
+          docker build --build-arg B5GC_MODULE=controller -t "${IMAGE}:${TAG}" -t "${IMAGE}:latest" -f nf.Dockerfile .
+          docker push "${IMAGE}:${TAG}" && docker push "${IMAGE}:latest"
+
+      - name: "[Build] Build and push gateway"
+        if: |
+          github.event_name == 'workflow_dispatch' ||
+          needs.detect-changes.outputs.need_build == 'true'
+        shell: bash
+        run: |
+          set -e; cd "$DOCKER_DIR"
+          IMAGE="ghcr.io/${{ steps.vars.outputs.owner }}/b5gc-gateway"
+          TAG="${{ steps.vars.outputs.tag }}"
+          docker build --build-arg B5GC_MODULE=gateway -t "${IMAGE}:${TAG}" -t "${IMAGE}:latest" -f nf.Dockerfile .
+          docker push "${IMAGE}:${TAG}" && docker push "${IMAGE}:latest"
+
+      - name: "[Build] Build and push nsm"
+        if: |
+          github.event_name == 'workflow_dispatch' ||
+          needs.detect-changes.outputs.need_build == 'true'
+        shell: bash
+        run: |
+          set -e; cd "$DOCKER_DIR"
+          IMAGE="ghcr.io/${{ steps.vars.outputs.owner }}/b5gc-nsm"
+          TAG="${{ steps.vars.outputs.tag }}"
+          docker build --build-arg B5GC_MODULE=nsm -t "${IMAGE}:${TAG}" -t "${IMAGE}:latest" -f nf.Dockerfile .
+          docker push "${IMAGE}:${TAG}" && docker push "${IMAGE}:latest"
+
+      - name: "[Build] Build and push remaining NFs"
+        if: |
+          github.event_name == 'workflow_dispatch' ||
+          needs.detect-changes.outputs.need_build == 'true'
         shell: bash
         run: |
           set -e; cd "$DOCKER_DIR"
           TAG="${{ steps.vars.outputs.tag }}"
           OWNER="${{ steps.vars.outputs.owner }}"
-          
-          # Base image
-          docker build --target b5gc-base -t "ghcr.io/${OWNER}/b5gc-base:${TAG}" -f nf.Dockerfile .
-          docker push "ghcr.io/${OWNER}/b5gc-base:${TAG}"
-          
-          # Apps
-          for nf in controller gateway nsm ausf udm pcf damf amf smf pran; do
-            docker build --build-arg B5GC_MODULE=${nf} -t "ghcr.io/${OWNER}/b5gc-${nf}:${TAG}" -f nf.Dockerfile .
-            docker push "ghcr.io/${OWNER}/b5gc-${nf}:${TAG}"
+          for nf in ausf udm pcf damf amf smf pran; do
+            IMAGE="ghcr.io/${OWNER}/b5gc-${nf}"
+            docker build --build-arg B5GC_MODULE=${nf} -t "${IMAGE}:${TAG}" -t "${IMAGE}:latest" -f nf.Dockerfile .
+            docker push "${IMAGE}:${TAG}" && docker push "${IMAGE}:latest"
           done
 
-      - name: "[Deploy] Render & Apply"
+      # ── DEPLOY ────────────────────────────────────────────
+      - name: "[Deploy] Ensure namespace etri6g"
+        if: |
+          github.event_name == 'workflow_dispatch' ||
+          needs.detect-changes.outputs.need_deploy == 'true'
+        shell: bash
+        run: |
+          export KUBECONFIG="$INFRA_DIR/kubeconfig"
+          kubectl create namespace etri6g --dry-run=client -o yaml | kubectl apply -f -
+
+      - name: "[Deploy] Render manifests"
+        if: |
+          github.event_name == 'workflow_dispatch' ||
+          needs.detect-changes.outputs.need_deploy == 'true'
+        shell: bash
+        run: |
+          set -e; cd "$INFRA_DIR"
+          ./scripts/render-ghcr-images.sh "${{ steps.vars.outputs.owner }}" "${{ steps.vars.outputs.tag }}" rendered
+
+      - name: "[Deploy] Apply manifests in order"
+        if: |
+          github.event_name == 'workflow_dispatch' ||
+          needs.detect-changes.outputs.need_deploy == 'true'
         shell: bash
         run: |
           set -e
           export KUBECONFIG="$INFRA_DIR/kubeconfig"
-          kubectl create namespace etri6g --dry-run=client -o yaml | kubectl apply -f -
-          
           cd "$INFRA_DIR"
-          ./scripts/render-ghcr-images.sh "${{ steps.vars.outputs.owner }}" "${{ steps.vars.outputs.tag }}" rendered
-          
-          for f in ctrl gw nsm mongo deploy-other pran; do
-            kubectl apply -f rendered/$f.yaml
-          done
+          kubectl apply -f rendered/ctrl.yaml
+          kubectl apply -f rendered/gw.yaml
+          kubectl apply -f rendered/nsm.yaml
+          kubectl apply -f rendered/mongo.yaml
+          kubectl apply -f rendered/deploy-other.yaml
+          kubectl apply -f rendered/pran.yaml
 
       - name: "[Deploy] Wait for rollout"
+        if: |
+          github.event_name == 'workflow_dispatch' ||
+          needs.detect-changes.outputs.need_deploy == 'true'
         shell: bash
         run: |
+          set -e
           export KUBECONFIG="$INFRA_DIR/kubeconfig"
-          for dep in ctrl-dep gateway-dep nsm-dep damf-dep amf-10-100-agent1-dep amf-10-100-agent2-dep smf-slice1-dep smf-slice2-dep pran-dep; do
-            kubectl rollout status deployment/$dep -n etri6g --timeout=120s
+          for dep in \
+            ctrl-dep gateway-dep nsm-dep damf-dep \
+            amf-10-100-agent1-dep amf-10-100-agent2-dep \
+            smf-slice1-dep smf-slice2-dep pran-dep; do
+            kubectl rollout status deployment/$dep -n etri6g --timeout=180s
           done
 
-      - name: "[WebUI] Restart app"
+      # ── MONITORING ────────────────────────────────────────
+      - name: "[Monitoring] Helm upgrade Loki + Alloy + Grafana"
+        if: |
+          github.event_name == 'workflow_dispatch' ||
+          needs.detect-changes.outputs.need_monitoring == 'true'
         shell: bash
         run: |
-          pkill -f "uvicorn server:app" || true
+          set -e
+          export KUBECONFIG="$INFRA_DIR/kubeconfig"
+          kubectl create namespace observability --dry-run=client -o yaml | kubectl apply -f -
+          helm repo add grafana https://grafana.github.io/helm-charts
+          helm repo update
+          helm upgrade --install loki    grafana/loki    -n observability -f "$INFRA_DIR/observability/loki-values.yaml"    --wait --timeout 3m
+          helm upgrade --install alloy   grafana/alloy   -n observability -f "$INFRA_DIR/observability/alloy-values.yaml"   --wait --timeout 2m
+          helm upgrade --install grafana grafana/grafana -n observability -f "$INFRA_DIR/observability/grafana-values.yaml" --wait --timeout 2m
+
+      # ── WEBUI ─────────────────────────────────────────────
+      - name: "[WebUI] Restart backend"
+        if: |
+          github.event_name == 'workflow_dispatch' ||
+          needs.detect-changes.outputs.need_deploy == 'true'
+        shell: bash
+        run: |
+          pkill -f "uvicorn server:app" || true; sleep 2
           cd "$WEBUI_DIR/backend"
-          export PROJECT_DIR="$INFRA_DIR" K8S_NAMESPACE=etri6g
+          export PATH="$PATH:$HOME/.local/bin"
+          export PROJECT_DIR="$INFRA_DIR"
+          export K8S_NAMESPACE=etri6g
           nohup uvicorn server:app --host 0.0.0.0 --port 8000 > /tmp/webui-backend.log 2>&1 &
+          for i in {1..10}; do
+            curl -sf http://localhost:8000/api/status >/dev/null 2>&1 && echo "✓ Backend up" && break
+            sleep 2
+          done
+
+      - name: "[WebUI] Restart frontend"
+        if: |
+          github.event_name == 'workflow_dispatch' ||
+          needs.detect-changes.outputs.need_deploy == 'true'
+        shell: bash
+        run: |
+          pkill -f "vite" || true; sleep 2
+          cd "$WEBUI_DIR/frontend"
+          nohup npm run dev > /tmp/webui-frontend.log 2>&1 &
+          echo "✓ WebUI frontend started"
 
   # ════════════════════════════════════════════════════
-  # JOB 5 · CD: POST-DEPLOY VERIFY
+  # JOB 5 · CD: POST-DEPLOY VERIFY — Đầy đủ các bước verify & rollback sâu
   # ════════════════════════════════════════════════════
   post-deploy-verify:
     name: "CD · Post-deploy verify"
     runs-on: [self-hosted, linux, x64]
-    needs: [detect-changes, build-deploy]
-    if: always() && needs.build-deploy.result == 'success'
+    needs:
+      - detect-changes
+      - build-deploy
+    if: |
+      always() &&
+      needs.build-deploy.result == 'success' && (
+        github.event_name == 'workflow_dispatch' ||
+        needs.detect-changes.outputs.need_deploy == 'true'
+      )
+    env:
+      INFRA_DIR: ${{ vars.INFRA_DIR || '' }}
     steps:
-      - name: Verify Pods state
+      - name: Resolve paths
         shell: bash
         run: |
-          export KUBECONFIG="${{ vars.INFRA_DIR || '$HOME/5gcore-deploy' }}/kubeconfig"
+          echo "INFRA_DIR=${INFRA_DIR:-$HOME/5gcore-deploy}" >> $GITHUB_ENV
+          echo "KUBECONFIG=${INFRA_DIR:-$HOME/5gcore-deploy}/kubeconfig" >> $GITHUB_ENV
+
+      - name: "[Verify 1] All NF pods Running"
+        id: verify_pods
+        shell: bash
+        run: |
+          set -e
+          FAILED=0
+          DEPS=(ctrl-dep gateway-dep nsm-dep ausf-dep udm-dep pcf-dep damf-dep amf-10-100-agent1-dep amf-10-100-agent2-dep smf-slice1-dep smf-slice2-dep pran-dep)
+          for dep in "${DEPS[@]}"; do
+            READY=$(kubectl get deployment/$dep -n etri6g -o jsonpath='{.status.readyReplicas}' 2>/dev/null || echo "0")
+            if [ "${READY:-0}" -ge 1 ]; then
+              echo "✓ $dep: Ready"
+            else
+              echo "✗ $dep: NOT ready"
+              FAILED=$((FAILED+1))
+            fi
+          done
           kubectl get pods -n etri6g -o wide
+          [ "$FAILED" -eq 0 ] || exit 1
+
+      - name: "[Verify 2] NF placement on correct nodes"
+        id: verify_placement
+        shell: bash
+        run: |
+          set -e
+          FAILED=0
+          check() {
+            local label=$1 expected=$2
+            actual=$(kubectl get pods -n etri6g -l "app=${label}" --no-headers -o wide 2>/dev/null | awk '{print $7}' | head -1)
+            if [ "$actual" = "$expected" ]; then
+              echo "✓ $label → $actual"
+            else
+              echo "✗ $label: expected=$expected actual=${actual:-NOT_FOUND}"
+              FAILED=$((FAILED+1))
+            fi
+          }
+          check ctrl     k3s-agent-1
+          check gateway  k3s-agent-1
+          check nsm      k3s-agent-1
+          check ausf     k3s-agent-1
+          check udm      k3s-agent-1
+          check pcf      k3s-agent-1
+          check damf     k3s-agent-1
+          check amf      k3s-agent-1
+          check smf-slice2 k3s-agent-2
+          check pran     k3s-server-1
+          [ "$FAILED" -eq 0 ] || exit 1
+
+      - name: "[Verify 3] NodePort reachable"
+        id: verify_nodeport
+        shell: bash
+        run: |
+          MASTER_IP="192.168.58.11"
+          FAILED=0
+          check_port() {
+            local name=$1 port=$2
+            if nc -z -w3 "$MASTER_IP" "$port" 2>/dev/null; then
+              echo "✓ $name :$port reachable"
+            else
+              echo "✗ $name :$port NOT reachable"
+              FAILED=$((FAILED+1))
+            fi
+          }
+          check_port "Controller API" 30008
+          check_port "Gateway"        30007
+          check_port "PRAN"           30500
+          [ "$FAILED" -eq 0 ] || exit 1
+
+      - name: "[Verify 4] Gateway log — NFs registered in mesh"
+        id: verify_mesh
+        shell: bash
+        run: |
+          GW_POD=$(kubectl get pods -n etri6g -l app=gateway --no-headers | awk '{print $1}' | head -1)
+          echo "Gateway pod: $GW_POD"
+          echo "=== Gateway log (tail 30) ==="
+          kubectl logs "$GW_POD" -n etri6g --tail=30 2>/dev/null || true
+
+      - name: "[Rollback] kubectl rollout undo nếu verify fail"
+        if: |
+          failure() && (
+            steps.verify_pods.outcome == 'failure' ||
+            steps.verify_placement.outcome == 'failure' ||
+            steps.verify_nodeport.outcome == 'failure'
+          )
+        shell: bash
+        run: |
+          echo "⚠ Verify failed — rolling back all deployments..."
+          for dep in \
+            ctrl-dep gateway-dep nsm-dep damf-dep \
+            amf-10-100-agent1-dep amf-10-100-agent2-dep \
+            smf-slice1-dep smf-slice2-dep pran-dep; do
+            kubectl rollout undo deployment/$dep -n etri6g 2>/dev/null && echo "↩ Rolled back $dep" || echo "⚠ Skip $dep"
+          done
 
   # ════════════════════════════════════════════════════
-  # JOB 6 · NOTIFY
+  # JOB 6 · NOTIFY — kết quả cuối cùng
   # ════════════════════════════════════════════════════
   notify:
     name: "Notify result"
     runs-on: ubuntu-latest
-    needs: [detect-changes, validate, pre-deploy-test, build-deploy, post-deploy-verify]
+    needs:
+      - detect-changes
+      - validate
+      - pre-deploy-test
+      - build-deploy
+      - post-deploy-verify
     if: always()
     steps:
       - name: Summary
-        run: echo "Pipeline executed successfully or completed evaluation."
+        shell: bash
+        run: |
+          echo "========================================"
+          echo "Pipeline Result"
+          echo "  Branch  : ${{ github.ref_name }}"
+          echo "  Commit  : ${{ github.sha }}"
+          echo "----------------------------------------"
+          echo "  validate        : ${{ needs.validate.result }}"
+          echo "  provision       : ${{ needs.provision-infra.result }}"
+          echo "  pre-deploy-test : ${{ needs.pre-deploy-test.result }}"
+          echo "  deploy          : ${{ needs.build-deploy.result }}"
+          echo "  post-verify     : ${{ needs.post-deploy-verify.result }}"
+          echo "========================================"
