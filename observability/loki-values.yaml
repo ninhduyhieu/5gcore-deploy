@@ -56,4 +56,3 @@ persistence:
   size: 10Gi
   accessModes:
     - ReadWriteOnce
-    
