@@ -118,8 +118,8 @@ jobs:
           done
 
   # ════════════════════════════════════════════════════
-  # JOB 2 · CD: PROVISION — Khởi tạo hạ tầng
-  # Tách biệt độc lập để làm tiền đề cho việc Dry-run test
+  # JOB 2 · CD: PROVISION — Khởi tạo hạ tầng (Vagrant + Ansible)
+  # Đã sửa lại logic để hỗ trợ khởi tạo VM lần đầu tiên (not_created)
   # ════════════════════════════════════════════════════
   provision-infra:
     name: "CD · Provision Infrastructure"
@@ -195,10 +195,17 @@ jobs:
           set -e
           cd "$INFRA_DIR"
           for vm in k3s-server-1 k3s-agent-1 k3s-agent-2; do
-            state=$(vagrant status $vm 2>/dev/null | grep "$vm" | awk '{print $2}')
-            echo "$vm: $state"
-            [ "$state" = "aborted" ] && vagrant halt $vm --force || true
+            # Lấy trạng thái thực tế, xử lý chuỗi loại bỏ khoảng trắng thừa
+            state=$(vagrant status $vm 2>/dev/null | grep -E "^$vm " | awk '{print $2}')
+            echo "Current state of $vm: '${state:-not_created}'"
+            
+            # Nếu trạng thái bị kẹt ở aborted, tắt cưỡng bức để sẵn sàng Up lại
+            if [ "$state" = "aborted" ]; then
+              echo "→ VM $vm is aborted. Forcing halt..."
+              vagrant halt $vm --force || true
+            fi
           done
+          echo "→ Executing vagrant up..."
           vagrant up --no-parallel
 
       - name: "[Provision] Wait for SSH"
@@ -344,7 +351,6 @@ jobs:
 
   # ════════════════════════════════════════════════════
   # JOB 4 · CD: BUILD AND DEPLOY
-  # Thụt lề (indentation) đã được fix chuẩn hóa hoàn toàn ở đây
   # ════════════════════════════════════════════════════
   build-deploy:
     name: "CD · Build and Deploy"
