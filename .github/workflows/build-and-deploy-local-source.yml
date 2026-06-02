@@ -346,18 +346,22 @@ jobs:
           set -e
           FAILED=0
           export KUBECONFIG="$INFRA_DIR/kubeconfig"
-          kubectl create namespace etri6g-dryrun --dry-run=client -o yaml | kubectl apply -f -
+          
+          # Đảm bảo namespace chính etri6g tồn tại để server dry-run kiểm tra được tuyển tập tài nguyên
+          kubectl create namespace etri6g --dry-run=client -o yaml | kubectl apply -f -
+
           for f in k8s/ctrl.yaml k8s/gw.yaml k8s/nsm.yaml \
                    k8s/mongo.yaml k8s/deploy-other.yaml k8s/pran.yaml; do
+            # Đổi target sang namespace chính 'etri6g' để trùng khớp với nội dung file yaml
             if kubectl apply --server-side --dry-run=server \
-                --namespace=etri6g-dryrun -f "$f" 2>&1; then
+                --namespace=etri6g -f "$f" 2>&1; then
               echo "✓ $f OK"
             else
               echo "✗ $f FAILED dry-run"
               FAILED=$((FAILED+1))
             fi
           done
-          kubectl delete namespace etri6g-dryrun --ignore-not-found=true
+
           [ "$FAILED" -eq 0 ] || exit 1
 
       - name: "[Pre-test 4] Check NodePorts not conflicting"
