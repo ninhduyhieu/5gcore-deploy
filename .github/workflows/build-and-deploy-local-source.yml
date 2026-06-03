@@ -424,10 +424,51 @@ jobs:
       - name: Verify required tools and source
         shell: bash
         run: |
-          set -e
-          test -d "$INFRA_DIR" && test -d "$DOCKER_DIR"
-          test -f "$DOCKER_DIR/nf.Dockerfile"
-          test -f "$DOCKER_DIR/copybuild.sh"
+          # 1. Bổ sung các đường dẫn cài đặt phổ biến vào PATH của Runner
+          export PATH="$PATH:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:$HOME/.local/bin"
+          
+          FAILED=0
+
+          echo "=== 1. CHECKING SYSTEM TOOLS ==="
+          if ! command -v vagrant &> /dev/null; then 
+            echo "✗ LỖI: Không tìm thấy lệnh 'vagrant'. Hãy đảm bảo Vagrant đã được cài global hoặc thêm vào PATH."; FAILED=$((FAILED+1))
+          else 
+            echo "✓ vagrant: $(vagrant --version | head -n1)"
+          fi
+
+          if ! command -v ansible &> /dev/null; then 
+            echo "✗ LỖI: Không tìm thấy lệnh 'ansible'. Hoặc user runner không có quyền thực thi."; FAILED=$((FAILED+1))
+          else 
+            echo "✓ ansible: $(ansible --version | head -n1)"
+          fi
+
+          if ! command -v docker &> /dev/null; then echo "✗ docker is MISSING"; FAILED=$((FAILED+1)); else echo "✓ docker: $(docker --version | head -n1)"; fi
+          if ! command -v kubectl &> /dev/null; then echo "✗ kubectl is MISSING"; FAILED=$((FAILED+1)); else echo "✓ kubectl: $(kubectl version --client --output=yaml | grep gitVersion || echo 'installed')"; fi
+          if ! command -v helm &> /dev/null; then echo "✗ helm is MISSING"; FAILED=$((FAILED+1)); else echo "✓ helm: $(helm version --short)"; fi
+
+          echo "=== 2. CHECKING PATHS & PERMISSIONS ==="
+          echo "INFRA_DIR target: $INFRA_DIR"
+          if [ ! -d "$INFRA_DIR" ]; then echo "✗ INFRA_DIR không tồn tại hoặc Runner không có quyền đọc"; FAILED=$((FAILED+1)); else echo "✓ INFRA_DIR exists"; fi
+          
+          echo "DOCKER_DIR target: $DOCKER_DIR"
+          if [ ! -d "$DOCKER_DIR" ]; then echo "✗ DOCKER_DIR không tồn tại hoặc Runner không có quyền đọc"; FAILED=$((FAILED+1)); else echo "✓ DOCKER_DIR exists"; fi
+
+          echo "=== 3. CHECKING FILES ==="
+          if [ ! -f "$DOCKER_DIR/nf.Dockerfile" ]; then echo "✗ Không tìm thấy file: nf.Dockerfile"; FAILED=$((FAILED+1)); else echo "✓ nf.Dockerfile found"; fi
+          if [ ! -f "$DOCKER_DIR/copybuild.sh" ]; then 
+            echo "✗ Không tìm thấy file: copybuild.sh"; FAILED=$((FAILED+1))
+          else 
+            echo "✓ copybuild.sh found"
+            # Cấp thêm quyền thực thi trực tiếp phòng trường hợp file bị lock quyền
+            chmod +x "$DOCKER_DIR/copybuild.sh" || true
+          fi
+
+          if [ "$FAILED" -gt 0 ]; then
+            echo "--------------------------------------------------------"
+            echo "🔥 Pipeline dừng lại vì phát hiện $FAILED lỗi cấu hình môi trường bên trên!"
+            exit 1
+          fi
+          echo "🎉 Tất cả điều kiện hợp lệ! Tiếp tục build..."
 
       # ── BUILD ─────────────────────────────────────────────
       - name: "[Build] Login to GHCR"
