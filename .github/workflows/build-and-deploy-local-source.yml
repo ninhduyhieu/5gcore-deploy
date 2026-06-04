@@ -361,7 +361,11 @@ jobs:
         run: |
           if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
             OWNER="${{ inputs.image_owner }}"
-            TAG="${{ inputs.image_tag == 'latest' && format('manual-{0}', date +%Y%m%d-%H%M%S) || inputs.image_tag }}"
+            if [ "${{ inputs.image_tag }}" = "latest" ]; then
+              TAG="manual-$(date +%Y%m%d-%H%M%S)"
+            else
+              TAG="${{ inputs.image_tag }}"
+            fi
           else
             OWNER="ninhduyhieu"
             TAG="sha-$(echo ${{ github.sha }} | cut -c1-7)"
