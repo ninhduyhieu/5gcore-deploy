@@ -38,22 +38,12 @@
 # Calico mặc định chọn eth0 → node không liên lạc được nhau → NotReady
 
 - name: "Patch calico-node to use eth1 for IP autodetection"
-  kubernetes.core.k8s_json_patch:
-    kubeconfig: /etc/rancher/k3s/k3s.yaml
-    kind: DaemonSet
-    namespace: kube-system
-    name: calico-node
-    patch:
-      - op: add
-        path: /spec/template/spec/containers/0/env/-
-        value:
-          name: IP_AUTODETECTION_METHOD
-          value: interface=eth1
-      - op: add
-        path: /spec/template/spec/containers/0/env/-
-        value:
-          name: IP6_AUTODETECTION_METHOD
-          value: interface=eth1
+  ansible.builtin.shell: |
+    kubectl --kubeconfig /etc/rancher/k3s/k3s.yaml patch daemonset calico-node -n kube-system --type='json' -p='[{"op": "add", "path": "/spec/template/spec/containers/0/env/-", "value": {"name": "IP_AUTODETECTION_METHOD", "value": "interface=eth1"}}, {"op": "add", "path": "/spec/template/spec/containers/0/env/-", "value": {"name": "IP6_AUTODETECTION_METHOD", "value": "interface=eth1"}}]'
+  register: patch_result
+  until: patch_result.rc == 0
+  retries: 3
+  delay: 10
 
 # Đợi K3s ghi nhận patch trước khi rollout bắt đầu
 - name: Wait before checking calico-node rollout
