@@ -249,15 +249,7 @@ jobs:
           }
 
       # ── ÉP CARD MẠNG ETH1 CHO CALICO ĐỂ NODE READY ────────
-      - name: "[Fix] Configure Calico Network Interface to eth1"
-        if: |
-          github.event_name == 'workflow_dispatch' ||
-          needs.detect-changes.outputs.need_ansible == 'true'
-        shell: bash
-        run: |
-          export KUBECONFIG="$INFRA_DIR/kubeconfig"
-          echo "Ép cấu hình Calico sử dụng đúng card mạng nội bộ eth1 của Vagrant..."
-          kubectl set env daemonset/calico-node -n kube-system IP_AUTODETECTION_METHOD=interface=eth1 || true
+      
 
       - name: "[Ansible] Verify cluster"
         if: |
