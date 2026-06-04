@@ -32,4 +32,48 @@
   until: "'Running' in calico_pods.stdout"
   retries: 30
   delay: 10
-  
+
+# ── FIX VirtualBox: ép Calico dùng eth1 (host-only 192.168.58.x) ──────────
+# VirtualBox tạo 2 adapter: eth0=NAT(10.0.2.x), eth1=host-only(192.168.58.x)
+# Calico mặc định chọn eth0 → node không liên lạc được nhau → NotReady
+
+- name: Patch calico-node to use eth1 for IP autodetection
+  command: >
+    kubectl --kubeconfig /etc/rancher/k3s/k3s.yaml
+    patch daemonset calico-node -n kube-system
+    --type=json
+    -p=[{"op":"add","path":"/spec/template/spec/containers/0/env/-","value":{"name":"IP_AUTODETECTION_METHOD","value":"interface=eth1"}},{"op":"add","path":"/spec/template/spec/containers/0/env/-","value":{"name":"IP6_AUTODETECTION_METHOD","value":"interface=eth1"}}]
+  retries: 3
+  delay: 5
+  register: patch_result
+  until: patch_result.rc == 0
+
+# Đợi K3s ghi nhận patch trước khi rollout bắt đầu
+- name: Wait before checking calico-node rollout
+  pause:
+    seconds: 15
+
+# DaemonSet rollout tuần tự từng node: 3 node × ~60s = ~180s tối thiểu
+# Đặt timeout=300s cho dư, retry=2 lần phòng chậm
+- name: Wait for calico-node to restart with new config
+  shell: |
+    kubectl --kubeconfig /etc/rancher/k3s/k3s.yaml \
+      rollout status daemonset/calico-node -n kube-system --timeout=300s
+  register: calico_rollout
+  retries: 2
+  delay: 30
+  until: calico_rollout.rc == 0
+
+# Chờ tất cả node Ready sau khi Calico dùng đúng interface
+- name: Wait for all nodes to be Ready
+  shell: |
+    TOTAL=$(kubectl --kubeconfig /etc/rancher/k3s/k3s.yaml \
+      get nodes --no-headers 2>/dev/null | wc -l)
+    READY=$(kubectl --kubeconfig /etc/rancher/k3s/k3s.yaml \
+      get nodes --no-headers 2>/dev/null | grep -w "Ready" | wc -l)
+    echo "Total=$TOTAL Ready=$READY"
+    [ "$TOTAL" -ge 1 ] && [ "$READY" -eq "$TOTAL" ]
+  register: nodes_ready
+  retries: 20
+  delay: 15
+  until: nodes_ready.rc == 0
