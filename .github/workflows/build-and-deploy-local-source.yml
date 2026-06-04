@@ -665,29 +665,26 @@ jobs:
         needs.detect-changes.outputs.need_deploy == 'true'
       )
     env:
-      INFRA_DIR: ${{ vars.INFRA_DIR || '' }}
+      INFRA_DIR: ""
+      SOURCE_DIR: ""
+      DOCKER_DIR: ""
+      WEBUI_DIR: ""
+      GTP5G_DIR: ""
+      UPF_DIR: ""
+      STORMSIM_DIR: ""
     steps:
       - name: Resolve paths
         shell: bash
         run: |
-          # Kiểm tra nếu biến rỗng hoặc không tồn tại thì gán cứng đường dẫn mặc định
-          [ -z "${{ vars.INFRA_DIR }}" ]  && INFRA_VAL="$HOME/5gcore-deploy"               || INFRA_VAL="${{ vars.INFRA_DIR }}"
-          [ -z "${{ vars.SOURCE_DIR }}" ] && SOURCE_VAL="$HOME/Downloads/etrib5gc"        || SOURCE_VAL="${{ vars.SOURCE_DIR }}"
-          [ -z "${{ vars.DOCKER_DIR }}" ] && DOCKER_VAL="$HOME/Downloads/etrib5gc/docker" || DOCKER_VAL="${{ vars.DOCKER_DIR }}"
-          [ -z "${{ vars.WEBUI_DIR }}" ]  && WEBUI_VAL="$HOME/Downloads/5gc-webui"         || WEBUI_VAL="${{ vars.WEBUI_DIR }}"
-          [ -z "${{ vars.GTP5G_DIR }}" ]  && GTP5G_VAL="$HOME/gtp5g"                       || GTP5G_VAL="${{ vars.GTP5G_DIR }}"
-          [ -z "${{ vars.UPF_DIR }}" ]    && UPF_VAL="$HOME/Downloads/etrib5gc"            || UPF_VAL="${{ vars.UPF_DIR }}"
-          [ -z "${{ vars.STORMSIM_DIR }}" ] && STORMSIM_VAL="$HOME/Downloads/stormsim"    || STORMSIM_VAL="${{ vars.STORMSIM_DIR }}"
-
-          # Đẩy các giá trị chuẩn xác này vào GITHUB_ENV cho các bước sau sử dụng
-          echo "INFRA_DIR=$INFRA_VAL"       >> $GITHUB_ENV
-          echo "SOURCE_DIR=$SOURCE_VAL"     >> $GITHUB_ENV
-          echo "DOCKER_DIR=$DOCKER_VAL"     >> $GITHUB_ENV
-          echo "WEBUI_DIR=$WEBUI_VAL"       >> $GITHUB_ENV
-          echo "GTP5G_DIR=$GTP5G_VAL"       >> $GITHUB_ENV
-          echo "UPF_DIR=$UPF_VAL"           >> $GITHUB_ENV
-          echo "STORMSIM_DIR=$STORMSIM_VAL" >> $GITHUB_ENV
-          echo "KUBECONFIG=$INFRA_VAL/kubeconfig" >> $GITHUB_ENV
+          # Ép buộc gán thẳng đường dẫn thư mục nằm trên máy chủ Runner của bạn
+          echo "INFRA_DIR=$HOME/5gcore-deploy"               >> $GITHUB_ENV
+          echo "SOURCE_DIR=$HOME/Downloads/etrib5gc"        >> $GITHUB_ENV
+          echo "DOCKER_DIR=$HOME/Downloads/etrib5gc/docker" >> $GITHUB_ENV
+          echo "WEBUI_DIR=$HOME/Downloads/5gc-webui"         >> $GITHUB_ENV
+          echo "GTP5G_DIR=$HOME/gtp5g"                       >> $GITHUB_ENV
+          echo "UPF_DIR=$HOME/Downloads/etrib5gc"              >> $GITHUB_ENV
+          echo "STORMSIM_DIR=$HOME/Downloads/stormsim"    >> $GITHUB_ENV
+          echo "KUBECONFIG=$HOME/5gcore-deploy/kubeconfig"   >> $GITHUB_ENV
 
       - name: "[Verify 1] All NF pods Running"
         id: verify_pods
