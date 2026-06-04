@@ -205,26 +205,6 @@ jobs:
             fi
           done
           vagrant up --no-parallel
-      - name: "[Provision] Generate Ansible inventory from Vagrant"
-        shell: bash
-        run: |
-          set -e
-          cd "$INFRA_DIR"
-
-          cat > inventory/hosts.ini <<EOF
-          [servers]
-          EOF
-
-          for host in k3s-server-1 k3s-agent-1 k3s-agent-2; do
-            PORT=$(vagrant ssh-config $host | awk '/Port / {print $2}')
-            KEY=$(vagrant ssh-config $host | awk '/IdentityFile / {print $2}' | tail -1)
-
-            echo "$host ansible_host=127.0.0.1 ansible_port=$PORT ansible_user=vagrant ansible_ssh_private_key_file=$KEY" \
-              >> inventory/hosts.ini
-          done
-
-          echo "Generated inventory:"
-          cat inventory/hosts.ini
 
       - name: "[Provision] Wait for SSH"
         if: |
@@ -235,7 +215,7 @@ jobs:
           set -e
           cd "$INFRA_DIR"
           for i in {1..40}; do
-            ansible -i inventory/hosts.ini all -m ping >/dev/null 2>&1 \
+            ansible -i inventory/hosts.yaml all -m ping >/dev/null 2>&1 \
               && echo "✓ All nodes reachable" && exit 0
             echo "Waiting... $i/40"; sleep 15
           done; exit 1
@@ -263,9 +243,9 @@ jobs:
         run: |
           set -e
           cd "$INFRA_DIR"
-          ansible-playbook -i inventory/hosts.ini playbook.yml || {
+          ansible-playbook -i inventory/hosts.yaml playbook.yml || {
             sleep 20
-            ansible-playbook -i inventory/hosts.ini playbook.yml
+            ansible-playbook -i inventory/hosts.yaml playbook.yml
           }
 
       # ── ÉP CARD MẠNG ETH1 CHO CALICO ĐỂ NODE READY ────────
