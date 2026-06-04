@@ -64,14 +64,20 @@
   register: patch_result
   until: patch_result.rc == 0
 
-# Patch xong calico-node DaemonSet sẽ rollout lại — chờ pod mới Running
+# Đợi K3s ghi nhận patch xong trước khi check rollout
+- name: Wait before checking calico-node rollout
+  pause:
+    seconds: 15
+
+# Patch xong → DaemonSet rollout tuần tự từng node
+# 3 node × ~60s mỗi node = cần ít nhất ~180s, đặt 300s cho an toàn
 - name: Wait for calico-node pods to restart with new config
   shell: |
     kubectl --kubeconfig /etc/rancher/k3s/k3s.yaml \
-      rollout status daemonset/calico-node -n kube-system --timeout=120s
+      rollout status daemonset/calico-node -n kube-system --timeout=300s
   register: calico_rollout
-  retries: 3
-  delay: 10
+  retries: 2
+  delay: 30
   until: calico_rollout.rc == 0
 
 # Chờ tất cả node chuyển sang Ready sau khi Calico dùng đúng interface
