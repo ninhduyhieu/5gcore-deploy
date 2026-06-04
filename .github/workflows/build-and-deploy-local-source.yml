@@ -212,8 +212,8 @@ jobs:
           cd "$INFRA_DIR"
 
           cat > inventory/hosts.ini <<EOF
-      [servers]
-      EOF
+          [servers]
+          EOF
 
           for host in k3s-server-1 k3s-agent-1 k3s-agent-2; do
             PORT=$(vagrant ssh-config $host | awk '/Port / {print $2}')
