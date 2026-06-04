@@ -665,26 +665,25 @@ jobs:
         needs.detect-changes.outputs.need_deploy == 'true'
       )
     env:
-      INFRA_DIR: ""
-      SOURCE_DIR: ""
-      DOCKER_DIR: ""
-      WEBUI_DIR: ""
-      GTP5G_DIR: ""
-      UPF_DIR: ""
-      STORMSIM_DIR: ""
+      INFRA_DIR: ${{ vars.INFRA_DIR }}
+      SOURCE_DIR: ${{ vars.SOURCE_DIR }}
+      DOCKER_DIR: ${{ vars.DOCKER_DIR }}
+      WEBUI_DIR: ${{ vars.WEBUI_DIR }}
+      GTP5G_DIR: ${{ vars.GTP5G_DIR }}
+      UPF_DIR: ${{ vars.UPF_DIR }}
+      STORMSIM_DIR: ${{ vars.STORMSIM_DIR }}
     steps:
       - name: Resolve paths
         shell: bash
         run: |
-          # Ép buộc gán thẳng đường dẫn thư mục nằm trên máy chủ Runner của bạn
-          echo "INFRA_DIR=$HOME/5gcore-deploy"               >> $GITHUB_ENV
-          echo "SOURCE_DIR=$HOME/Downloads/etrib5gc"        >> $GITHUB_ENV
-          echo "DOCKER_DIR=$HOME/Downloads/etrib5gc/docker" >> $GITHUB_ENV
-          echo "WEBUI_DIR=$HOME/Downloads/5gc-webui"         >> $GITHUB_ENV
-          echo "GTP5G_DIR=$HOME/gtp5g"                       >> $GITHUB_ENV
-          echo "UPF_DIR=$HOME/Downloads/etrib5gc"              >> $GITHUB_ENV
-          echo "STORMSIM_DIR=$HOME/Downloads/stormsim"    >> $GITHUB_ENV
-          echo "KUBECONFIG=$HOME/5gcore-deploy/kubeconfig"   >> $GITHUB_ENV
+          echo "INFRA_DIR=${INFRA_DIR:-$HOME/5gcore-deploy}" >> $GITHUB_ENV
+          echo "SOURCE_DIR=${SOURCE_DIR:-$HOME/Downloads/etrib5gc}" >> $GITHUB_ENV
+          echo "DOCKER_DIR=${DOCKER_DIR:-$HOME/Downloads/etrib5gc/docker}" >> $GITHUB_ENV
+          echo "WEBUI_DIR=${WEBUI_DIR:-$HOME/Downloads/5gc-webui}" >> $GITHUB_ENV
+          echo "GTP5G_DIR=${GTP5G_DIR:-$HOME/gtp5g}" >> $GITHUB_ENV
+          echo "UPF_DIR=${UPF_DIR:-$HOME/Downloads/etrib5gc}" >> $GITHUB_ENV
+          echo "STORMSIM_DIR=${STORMSIM_DIR:-$HOME/Downloads/stormsim}" >> $GITHUB_ENV
+          echo "KUBECONFIG=${INFRA_DIR:-$HOME/5gcore-deploy}/kubeconfig" >> $GITHUB_ENV
 
       - name: "[Verify 1] All NF pods Running"
         id: verify_pods
