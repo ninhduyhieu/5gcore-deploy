@@ -13,6 +13,14 @@
     mode: '0755'
     validate_certs: false
 
+# 🌟 TASK ĐƯỢC BỔ SUNG: Chạy script cài đặt K3s Server
+- name: Execute K3s installation script (Server)
+  shell: /tmp/k3s_install.sh
+  environment:
+    INSTALL_K3S_EXEC: "server --disable traefik"
+  args:
+    creates: /var/lib/rancher/k3s/server/node-token
+
 - name: Wait for token to be available
   wait_for:
     path: /var/lib/rancher/k3s/server/node-token
