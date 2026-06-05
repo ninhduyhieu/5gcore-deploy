@@ -523,4 +523,3 @@ jobs:
     steps:
       - name: Finished Pipeline
         run: echo "Toàn bộ chuỗi Pipeline đã được thực thi hoàn tất."
-        
