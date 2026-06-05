@@ -124,8 +124,10 @@ jobs:
           export KUBECONFIG="$INFRA_DIR/kubeconfig"
           echo "Waiting for all cluster nodes to be in 'Ready' state..."
           for i in {1..20}; do
-            READY_COUNT=$(kubectl get nodes --no-headers 2>/dev/null | grep -E "\bReady\b" | wc -l || echo "0")
+            # Sửa lại dòng này sử dụng grep -c để tránh lỗi khoảng trắng của wc -l
+            READY_COUNT=$(kubectl get nodes 2>/dev/null | grep -c -E "\bReady\b" || echo "0")
             echo "Current healthy nodes: $READY_COUNT / 3 (Attempt $i/20)"
+
             if [ "$READY_COUNT" -ge 3 ]; then
               echo "🎉 Cluster is healthy and stable!"
               kubectl get nodes -o wide
@@ -136,7 +138,6 @@ jobs:
           echo "❌ Cluster Health Check FAILED. System is unstable."
           kubectl get nodes -o wide || true
           exit 1
-
   # ════════════════════════════════════════════════════
   # JOB 3 · DETECT — Chỉ phân tích thay đổi của phần APP/DEPLOY
   # ════════════════════════════════════════════════════
