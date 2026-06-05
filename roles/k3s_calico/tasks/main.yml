@@ -38,7 +38,8 @@
       spec:
         calicoNetwork:
           nodeAddressAutodetectionV4:
-            interface: eth1
+            cidrs:
+              - 192.168.58.0/24
           ipPools:
             - name: default-ipv4-ippool
               blockSize: 26
@@ -46,12 +47,6 @@
               encapsulation: VXLANCrossSubnet
               natOutgoing: Enabled
               nodeSelector: all()
-      ---
-      apiVersion: operator.tigera.io/v1
-      kind: APIServer
-      metadata:
-        name: default
-      spec: {}
 
 - name: Apply Calico custom resources
   command: kubectl --kubeconfig /etc/rancher/k3s/k3s.yaml apply -f /tmp/calico-custom-resources.yaml
@@ -60,12 +55,41 @@
   register: result
   until: result.rc == 0
 
-- name: Wait for Calico tigerastatus to be available
-  command: kubectl --kubeconfig /etc/rancher/k3s/k3s.yaml wait --for=condition=Available tigerastatus/calico --timeout=300s
-  retries: 30
-  delay: 10
-  register: result
-  until: result.rc == 0
+- name: Wait for Calico to become available
+  block:
+    - name: Wait for Calico node daemonset
+      command: kubectl --kubeconfig /etc/rancher/k3s/k3s.yaml rollout status daemonset/calico-node -n calico-system --timeout=180s
+      retries: 3
+      delay: 10
+      register: result
+      until: result.rc == 0
+
+    - name: Wait for Calico tigerastatus to be available
+      command: kubectl --kubeconfig /etc/rancher/k3s/k3s.yaml wait --for=condition=Available tigerastatus/calico --timeout=60s
+      retries: 5
+      delay: 10
+      register: result
+      until: result.rc == 0
+  rescue:
+    - name: Print Calico diagnostics
+      shell: |
+        echo "=== Nodes ==="
+        kubectl --kubeconfig /etc/rancher/k3s/k3s.yaml get nodes -o wide || true
+        echo "=== Tigera status ==="
+        kubectl --kubeconfig /etc/rancher/k3s/k3s.yaml get tigerastatus -o wide || true
+        echo "=== Calico pods ==="
+        kubectl --kubeconfig /etc/rancher/k3s/k3s.yaml get pods -n calico-system -o wide || true
+        echo "=== Tigera operator ==="
+        kubectl --kubeconfig /etc/rancher/k3s/k3s.yaml get pods -n tigera-operator -o wide || true
+        echo "=== Calico installation ==="
+        kubectl --kubeconfig /etc/rancher/k3s/k3s.yaml describe installation default || true
+      args:
+        executable: /bin/bash
+      changed_when: false
+
+    - name: Fail when Calico is not available
+      fail:
+        msg: Calico did not become available. See diagnostics above.
 
 - name: Wait for all cluster nodes to be Ready
   shell: |
