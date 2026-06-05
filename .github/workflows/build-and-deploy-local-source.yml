@@ -100,13 +100,17 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install yamllint
-        run: pip install yamllint
+      - name: Install validation tools
+        run: pip install yamllint ansible
 
-      - name: Lint YAML — k8s + observability + playbook
+      - name: Lint YAML — infra, k8s, observability, workflow
         run: |
           yamllint -d "{extends: relaxed, rules: {line-length: {max: 200}}}" \
-            k8s/ observability/ playbook.yml
+            .github/workflows/build-and-deploy-local-source.yml \
+            k8s/ observability/ roles/ playbook.yml
+
+      - name: Check Ansible playbook syntax
+        run: ansible-playbook --syntax-check -i inventory/hosts.yaml playbook.yml
 
       - name: Check required files exist
         run: |
@@ -148,6 +152,19 @@ jobs:
         run: |
           echo "INFRA_DIR=${INFRA_DIR:-$HOME/5gcore-deploy}" >> $GITHUB_ENV
 
+      - name: Sync checked-out infra into INFRA_DIR
+        shell: bash
+        run: |
+          set -e
+          mkdir -p "$INFRA_DIR"
+          rsync -a --delete \
+            --exclude '.git/' \
+            --exclude '.vagrant/' \
+            --exclude '.venv/' \
+            --exclude 'kubeconfig' \
+            --exclude 'kubeconfig.bak' \
+            "$GITHUB_WORKSPACE"/ "$INFRA_DIR"/
+
       - name: Resolve image tag
         id: vars
         shell: bash
@@ -170,10 +187,22 @@ jobs:
         shell: bash
         run: |
           set -e
-          vagrant --version && ansible --version
+          vagrant --version && ansible --version && rsync --version
           test -d "$INFRA_DIR"
 
       # ── PROVISION ────────────────────────────────────────
+      - name: "[Provision] Recreate Vagrant VMs for manual dispatch"
+        if: github.event_name == 'workflow_dispatch'
+        shell: bash
+        run: |
+          set -e
+          cd "$INFRA_DIR"
+          echo "Manual workflow_dispatch detected; destroying old K3s VMs before provisioning."
+          for vm in k3s-agent-2 k3s-agent-1 k3s-server-1; do
+            vagrant destroy -f "$vm" || true
+          done
+          rm -f kubeconfig /tmp/k3s-node-token
+
       - name: "[Provision] Vagrant up"
         if: |
           github.event_name == 'workflow_dispatch' ||
@@ -240,50 +269,24 @@ jobs:
       # ══════════════════════════════════════════════════════════════════════════
       # CHÈN BƯỚC NÀY VÀO NGAY SAU PLAYBOOK — ĐỂ TỰ ĐỘNG CỨU HỘ AGENT & CALICO
       # ══════════════════════════════════════════════════════════════════════════
-      - name: "[Cứu hộ Hệ thống] Tự động kích hoạt Agent và Dọn dẹp Calico bị kẹt"
+      - name: "[Diagnostics] Show cluster network state after Ansible"
         shell: bash
         run: |
           export KUBECONFIG="$INFRA_DIR/kubeconfig"
-          echo "=== Khởi động quy trình tự động cứu hộ hạ tầng ==="
           cd "$INFRA_DIR"
-          
-          # 1. Ép cả 2 máy Worker Agent khởi động lại dịch vụ k3s để tái đồng bộ với Master
-          for vm in k3s-agent-1 k3s-agent-2; do
-            echo "Đang kích hoạt lại k3s-agent trên máy $vm..."
-            vagrant ssh $vm -c "sudo systemctl restart k3s-agent" || true
-          done
-          
-          # Chờ 15 giây cho dịch vụ ổn định
-          sleep 15
-          
-          # 2. Xóa cưỡng bức (Force Delete) toàn bộ các Pod Calico cũ đang bị Treo/Kẹt 
-          # Việc này ép Kubernetes tạo lại Pod Calico mới nhận ngay card mạng eth1 đã patch
-          echo "Đang dọn dẹp các Pod Calico bị đóng băng trạng thái..."
-          kubectl delete pods -n kube-system -l k8s-app=calico-node --force --grace-period=0 2>/dev/null || true
-          
-          # 3. In ra trạng thái các Node để kiểm tra
-          echo "=== TRẠNG THÁI CÁC NODE HIỆN TẠI ==="
+          echo "=== Nodes ==="
           kubectl get nodes -o wide || true
-      # ── SỬA LỖI TIMEOUT CALICO (Bản vá động trực tiếp từ Runner) ──
-      - name: "[Fix] Force kick Calico mesh and ensure Agents Ready"
+          echo "=== Calico pods ==="
+          kubectl get pods -n calico-system -o wide || true
+          echo "=== Tigera status ==="
+          kubectl get tigerastatus || true
+
+      - name: "[Gate] Require all nodes Ready"
         shell: bash
         run: |
+          set -e
           export KUBECONFIG="$INFRA_DIR/kubeconfig"
-          echo "===> BẮT ĐẦU BẢN VÁ ĐỘNG DỌN DẸP MẠNG CALICO KHỎI BỊ TIMEOUT <==="
           cd "$INFRA_DIR"
-          
-          # 1. Ép các agent restart để nhận cluster token
-          for vm in k3s-agent-1 k3s-agent-2; do
-            echo "Đang khôi phục k3s-agent trên $vm..."
-            vagrant ssh $vm -c "sudo systemctl restart k3s-agent" || true
-          done
-          sleep 15
-
-          # 2. Xóa các pod calico cũ đang bị treo để ép kích hoạt cấu hình eth1 mới patch
-          echo "Xóa cưỡng bức các pod Calico bị kẹt..."
-          kubectl delete pods -n kube-system -l k8s-app=calico-node --force --grace-period=0 2>/dev/null || true
-          
-          # 3. Chờ tối đa 3 phút xem cụm có lên Ready sạch không
           echo "Chờ các Node chuyển sang Ready..."
           for i in {1..20}; do
             READY_COUNT=$(kubectl get nodes --no-headers 2>/dev/null | grep -E "\bReady\b" | wc -l || echo "0")
@@ -295,7 +298,11 @@ jobs:
             fi
             sleep 10
           done
-          echo "⚠️ Lưu ý: Các node chưa Ready hoàn toàn nhưng sẽ chuyển tiếp sang bước test."
+          echo "Cluster vẫn chưa Ready sau khi cài K3s/Calico."
+          kubectl get nodes -o wide || true
+          kubectl get pods -n calico-system -o wide || true
+          kubectl get tigerastatus || true
+          exit 1
 
   # ════════════════════════════════════════════════════
   # JOB 3 · CI: TEST (dry-run) — Chạy trước khi deploy
@@ -335,7 +342,9 @@ jobs:
             fi
             sleep 12
           done
-          echo "⚠️ Cảnh báo: Tiếp tục chạy bất chấp trạng thái Node."
+          echo "Cluster nodes are not Ready; stopping before dry-run and deploy."
+          kubectl get nodes -o wide || true
+          exit 1
 
       - name: "[Pre-test 2] Validate nodeSelector against real nodes"
         shell: bash
@@ -381,6 +390,14 @@ jobs:
       - name: Checkout infra repo
         uses: actions/checkout@v4
 
+      - name: Resolve paths
+        shell: bash
+        run: |
+          echo "INFRA_DIR=${INFRA_DIR:-$HOME/5gcore-deploy}" >> $GITHUB_ENV
+          echo "SOURCE_DIR=${SOURCE_DIR:-$HOME/Downloads/etrib5gc}" >> $GITHUB_ENV
+          echo "DOCKER_DIR=${DOCKER_DIR:-$HOME/Downloads/etrib5gc/docker}" >> $GITHUB_ENV
+          echo "WEBUI_DIR=${WEBUI_DIR:-$HOME/Downloads/5gc-webui}" >> $GITHUB_ENV
+
       - name: Resolve image tag
         id: vars
         shell: bash
@@ -409,6 +426,9 @@ jobs:
 
       - name: "[Build] Prepare build context"
         run: |
+          test -d "$DOCKER_DIR"
+          test -f "$DOCKER_DIR/nf.Dockerfile"
+          test -f "$DOCKER_DIR/copybuild.sh"
           cd "$DOCKER_DIR"
           chmod +x copybuild.sh && ./copybuild.sh
 
@@ -417,14 +437,14 @@ jobs:
           cd "$DOCKER_DIR"
           OWNER="${{ steps.vars.outputs.owner }}"
           TAG="${{ steps.vars.outputs.tag }}"
-          
+
           # Định nghĩa cờ build an toàn, giới hạn tài nguyên tối đa để không cướp RAM của VirtualBox
           BUILD_OPTS="--memory=2g --cpu-shares=512"
-          
+
           echo "Đang build an toàn hệ thống Base Image..."
           docker build $BUILD_OPTS --target b5gc-base -t "ghcr.io/${OWNER}/b5gc-base:${TAG}" -t "ghcr.io/${OWNER}/b5gc-base:latest" -f nf.Dockerfile .
           docker push "ghcr.io/${OWNER}/b5gc-base:${TAG}"
-          
+
           for module in controller gateway nsm; do
             echo "Đang build module $module..."
             docker build $BUILD_OPTS --build-arg B5GC_MODULE=$module -t "ghcr.io/${OWNER}/b5gc-${module}:${TAG}" -t "ghcr.io/${OWNER}/b5gc-${module}:latest" -f nf.Dockerfile .
@@ -444,7 +464,7 @@ jobs:
           cd "$INFRA_DIR"
           kubectl create namespace etri6g --dry-run=client -o yaml | kubectl apply -f -
           ./scripts/render-ghcr-images.sh "${{ steps.vars.outputs.owner }}" "${{ steps.vars.outputs.tag }}" rendered
-          
+
           for f in ctrl gw nsm mongo deploy-other pran; do
             kubectl apply -f "rendered/${f}.yaml"
           done
@@ -484,8 +504,13 @@ jobs:
       always() &&
       needs.build-deploy.result == 'success'
     env:
-      INFRA_DIR: ${{ vars.INFRA_DIR }}
+      INFRA_DIR: ${{ vars.INFRA_DIR || '' }}
     steps:
+      - name: Resolve paths
+        shell: bash
+        run: |
+          echo "INFRA_DIR=${INFRA_DIR:-$HOME/5gcore-deploy}" >> $GITHUB_ENV
+
       - name: Verify Deployments State
         run: |
           export KUBECONFIG="$INFRA_DIR/kubeconfig"
