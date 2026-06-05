@@ -17,7 +17,7 @@ on:
 
 concurrency:
   group: deploy-${{ github.ref }}
-  cancel-in-progress: false # CHỐNG SẬP MÁY ẢO: Đổi từ true thành false để không kill ngang tiến trình Vagrant
+  cancel-in-progress: false # CHỐNG SẬP MÁY ẢO: Không kill ngang tiến trình Vagrant
 
 jobs:
 
@@ -190,14 +190,13 @@ jobs:
           vagrant --version && ansible --version && rsync --version
           test -d "$INFRA_DIR"
 
-      # ── PROVISION ────────────────────────────────────────
       - name: "[Provision] Recreate Vagrant VMs for manual dispatch"
         if: github.event_name == 'workflow_dispatch'
         shell: bash
         run: |
           set -e
           cd "$INFRA_DIR"
-          echo "Manual workflow_dispatch detected; destroying old K3s VMs before provisioning."
+          echo "Manual dispatch: hủy VM cũ trước khi dựng lại."
           for vm in k3s-agent-2 k3s-agent-1 k3s-server-1; do
             vagrant destroy -f "$vm" || true
           done
@@ -234,7 +233,6 @@ jobs:
             echo "Waiting... $i/40"; sleep 15
           done; exit 1
 
-      # ── GIẢI PHÓNG APT LOCK CHỐNG KẸT ANSIBLE ──────────────
       - name: "[Fix] Force release APT lock on target VMs"
         if: |
           github.event_name == 'workflow_dispatch' ||
@@ -242,13 +240,11 @@ jobs:
         shell: bash
         run: |
           cd "$INFRA_DIR"
-          echo "Cưỡng bức giải phóng file lock của hệ thống APT để tránh kẹt Ansible..."
+          echo "Giải phóng file lock của hệ thống APT để tránh kẹt Ansible..."
           for vm in k3s-server-1 k3s-agent-1 k3s-agent-2; do
-            echo "Clearing APT lock on $vm..."
             vagrant ssh $vm -c "sudo killall -9 apt-get apt dpkg 2>/dev/null || true; sudo rm -f /var/lib/dpkg/lock-frontend /var/lib/apt/lists/lock /var/lib/dpkg/lock" || true
           done
 
-      # ── ANSIBLE RUN PLAYBOOK ─────────────────────────────
       - name: "[Ansible] Run playbook with retry"
         if: |
           github.event_name == 'workflow_dispatch' ||
@@ -266,9 +262,7 @@ jobs:
             sleep 10
             ansible-playbook -i inventory/hosts.yaml playbook.yml
           }
-      # ══════════════════════════════════════════════════════════════════════════
-      # CHÈN BƯỚC NÀY VÀO NGAY SAU PLAYBOOK — ĐỂ TỰ ĐỘNG CỨU HỘ AGENT & CALICO
-      # ══════════════════════════════════════════════════════════════════════════
+
       - name: "[Diagnostics] Show cluster network state after Ansible"
         shell: bash
         run: |
@@ -277,9 +271,7 @@ jobs:
           echo "=== Nodes ==="
           kubectl get nodes -o wide || true
           echo "=== Calico pods ==="
-          kubectl get pods -n calico-system -o wide || true
-          echo "=== Tigera status ==="
-          kubectl get tigerastatus || true
+          kubectl get pods -n kube-system -l k8s-app=calico-node -o wide || true
 
       - name: "[Gate] Require all nodes Ready"
         shell: bash
@@ -300,8 +292,6 @@ jobs:
           done
           echo "Cluster vẫn chưa Ready sau khi cài K3s/Calico."
           kubectl get nodes -o wide || true
-          kubectl get pods -n calico-system -o wide || true
-          kubectl get tigerastatus || true
           exit 1
 
   # ════════════════════════════════════════════════════
@@ -368,7 +358,7 @@ jobs:
           export KUBECONFIG="$INFRA_DIR/kubeconfig"
           kubectl create namespace etri6g --dry-run=client -o yaml | kubectl apply -f -
           for f in k8s/ctrl.yaml k8s/gw.yaml k8s/nsm.yaml k8s/mongo.yaml k8s/deploy-other.yaml k8s/pran.yaml; do
-            kubectl apply --server-side --dry-run=server --namespace=etri6g -f "$f" && echo "✓ $f OK" || echo "✗ $f Lỗi cấu hình cú pháp"
+            kubectl apply --server-side --dry-run=server --namespace=etri6g -f "$f" && echo "✓ $f OK" || echo "✗ $f Lỗi cấu hình"
           done
 
   # ════════════════════════════════════════════════════
@@ -377,7 +367,7 @@ jobs:
   build-deploy:
     name: "CD · Build and Deploy"
     runs-on: [self-hosted, linux, x64]
-    needs: [detect-changes, pre-deploy-test]
+    needs: [detect-changes, provision-infra, pre-deploy-test] # Kế thừa trực tiếp output từ Job 2
     if: |
       always() &&
       needs.pre-deploy-test.result == 'success'
@@ -398,25 +388,27 @@ jobs:
           echo "DOCKER_DIR=${DOCKER_DIR:-$HOME/Downloads/etrib5gc/docker}" >> $GITHUB_ENV
           echo "WEBUI_DIR=${WEBUI_DIR:-$HOME/Downloads/5gc-webui}" >> $GITHUB_ENV
 
-      - name: Resolve image tag
+      # ✨ ĐÃ SỬA: Đồng bộ code git mới về thư mục làm việc cục bộ tránh dùng manifest cũ
+      - name: Sync checked-out infra into INFRA_DIR
+        shell: bash
+        run: |
+          set -e
+          mkdir -p "$INFRA_DIR"
+          rsync -a --delete \
+            --exclude '.git/' \
+            --exclude '.vagrant/' \
+            --exclude '.venv/' \
+            --exclude 'kubeconfig' \
+            "$GITHUB_WORKSPACE"/ "$INFRA_DIR"/
+
+      # ✨ ĐÃ SỬA: Lấy trực tiếp Image Owner và Tag kế thừa từ Job trước, tránh lỗi lệch Tag do hàm date
+      - name: Resolve image tag from previous job
         id: vars
         shell: bash
         run: |
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            OWNER="${{ inputs.image_owner }}"
-            if [ "${{ inputs.image_tag }}" = "latest" ]; then
-              TAG="manual-$(date +%Y%m%d-%H%M%S)"
-            else
-              TAG="${{ inputs.image_tag }}"
-            fi
-          else
-            OWNER="ninhduyhieu"
-            TAG="sha-$(echo ${{ github.sha }} | cut -c1-7)"
-          fi
-          echo "owner=${OWNER}" >> $GITHUB_OUTPUT
-          echo "tag=${TAG}"     >> $GITHUB_OUTPUT
+          echo "owner=${{ needs.provision-infra.outputs.image_owner }}" >> $GITHUB_OUTPUT
+          echo "tag=${{ needs.provision-infra.outputs.image_tag }}" >> $GITHUB_OUTPUT
 
-      # ── BUILD DOCKER (Bổ sung giới hạn RAM/CPU tránh sập OOM Killer máy chủ) ──
       - name: "[Build] Login to GHCR"
         uses: docker/login-action@v3
         with:
@@ -438,26 +430,28 @@ jobs:
           OWNER="${{ steps.vars.outputs.owner }}"
           TAG="${{ steps.vars.outputs.tag }}"
 
-          # Định nghĩa cờ build an toàn, giới hạn tài nguyên tối đa để không cướp RAM của VirtualBox
+          # Giới hạn tài nguyên để tránh sập RAM máy chủ
           BUILD_OPTS="--memory=2g --cpu-shares=512"
 
           echo "Đang build an toàn hệ thống Base Image..."
           docker build $BUILD_OPTS --target b5gc-base -t "ghcr.io/${OWNER}/b5gc-base:${TAG}" -t "ghcr.io/${OWNER}/b5gc-base:latest" -f nf.Dockerfile .
           docker push "ghcr.io/${OWNER}/b5gc-base:${TAG}"
+          docker push "ghcr.io/${OWNER}/b5gc-base:latest"
 
           for module in controller gateway nsm; do
             echo "Đang build module $module..."
             docker build $BUILD_OPTS --build-arg B5GC_MODULE=$module -t "ghcr.io/${OWNER}/b5gc-${module}:${TAG}" -t "ghcr.io/${OWNER}/b5gc-${module}:latest" -f nf.Dockerfile .
             docker push "ghcr.io/${OWNER}/b5gc-${module}:${TAG}"
+            docker push "ghcr.io/${OWNER}/b5gc-${module}:latest"
           done
 
           for nf in ausf udm pcf damf amf smf pran; do
             echo "Đang build Network Function: $nf..."
             docker build $BUILD_OPTS --build-arg B5GC_MODULE=${nf} -t "ghcr.io/${OWNER}/b5gc-${nf}:${TAG}" -t "ghcr.io/${OWNER}/b5gc-${nf}:latest" -f nf.Dockerfile .
             docker push "ghcr.io/${OWNER}/b5gc-${nf}:${TAG}"
+            docker push "ghcr.io/${OWNER}/b5gc-${nf}:latest"
           done
 
-      # ── DEPLOY TO K3S CLUSTER ─────────────────────────────
       - name: "[Deploy] Render and Apply manifests"
         run: |
           export KUBECONFIG="$INFRA_DIR/kubeconfig"
@@ -473,10 +467,9 @@ jobs:
         run: |
           export KUBECONFIG="$INFRA_DIR/kubeconfig"
           for dep in ctrl-dep gateway-dep nsm-dep damf-dep pran-dep; do
-            kubectl rollout status deployment/$dep -n etri6g --timeout=60s || echo "⚠️ Thao tác $dep đang tốn thời gian khởi động..."
+            kubectl rollout status deployment/$dep -n etri6g --timeout=60s || echo "⚠️ Thao tác $dep đang khởi động..."
           done
 
-      # ── MONITORING & WEBUI ────────────────────────────────
       - name: "[Monitoring] Helm upgrade"
         run: |
           export KUBECONFIG="$INFRA_DIR/kubeconfig"
@@ -484,17 +477,19 @@ jobs:
           helm repo add grafana https://grafana.github.io/helm-charts && helm repo update
           helm upgrade --install loki grafana/loki -n observability -f "$INFRA_DIR/observability/loki-values.yaml" --wait --timeout 2m || true
           helm upgrade --install alloy grafana/alloy -n observability -f "$INFRA_DIR/observability/alloy-values.yaml" --wait --timeout 2m || true
+          helm upgrade --install grafana grafana/grafana -n observability -f "$INFRA_DIR/observability/grafana-values.yaml" --wait --timeout 2m || true
 
       - name: "[WebUI] Restart app"
         run: |
           pkill -f "uvicorn server:app" || true
           pkill -f "vite" || true
+          sleep 2
           cd "$WEBUI_DIR/backend" && export PROJECT_DIR="$INFRA_DIR" && export K8S_NAMESPACE=etri6g
           nohup uvicorn server:app --host 0.0.0.0 --port 8000 > /tmp/webui-backend.log 2>&1 &
           cd "$WEBUI_DIR/frontend" && nohup npm run dev > /tmp/webui-frontend.log 2>&1 &
 
   # ════════════════════════════════════════════════════
-  # JOB 5 · CD: POST-DEPLOY VERIFY — Kiểm tra dịch vụ sau deploy
+  # JOB 5 · CD: POST-DEPLOY VERIFY — Kiểm tra trạng thái cuối
   # ════════════════════════════════════════════════════
   post-deploy-verify:
     name: "CD · Post-deploy verify"
@@ -518,7 +513,7 @@ jobs:
           kubectl get pods -n etri6g -o wide
 
   # ════════════════════════════════════════════════════
-  # JOB 6 · NOTIFY — kết quả cuối cùng
+  # JOB 6 · NOTIFY — Thông báo kết quả
   # ════════════════════════════════════════════════════
   notify:
     name: "Notify result"
@@ -526,8 +521,5 @@ jobs:
     needs: [validate, provision-infra, pre-deploy-test, build-deploy, post-deploy-verify]
     if: always()
     steps:
-      - name: Summary
-        run: |
-          echo "========================================"
-          echo "Pipeline hoàn tất lượt chạy thành công!"
-          echo "========================================"
+      - name: Finished Pipeline
+        run: echo "Toàn bộ chuỗi Pipeline đã được thực thi hoàn tất."
