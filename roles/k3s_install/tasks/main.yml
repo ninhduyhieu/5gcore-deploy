@@ -4,17 +4,11 @@
     name:
       - curl
     state: present
-    update_cache: yes
+    update_cache: true
 
 - name: Download K3s install script
   get_url:
     url: https://get.k3s.io
-    dest: /tmp/k3s_install.sh
-    mode: '0755'
-
-- name: Download K3s install script
-  get_url:
-    url: https://raw.githubusercontent.com/k3s-io/k3s/master/install.sh
     dest: /tmp/k3s_install.sh
     mode: '0755'
     validate_certs: false
@@ -36,7 +30,7 @@
 - name: Enable k3s service
   systemd:
     name: k3s
-    enabled: yes
+    enabled: true
     state: started
 
 - name: Allow vagrant user to read kubeconfig
