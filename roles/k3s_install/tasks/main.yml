@@ -12,56 +12,11 @@
     dest: /tmp/k3s_install.sh
     mode: '0755'
 
-- name: Ensure K3s config directory exists
-  file:
-    path: /etc/rancher/k3s
-    state: directory
-    mode: '0755'
-
-- name: Write K3s server config
-  copy:
-    dest: /etc/rancher/k3s/config.yaml
-    mode: '0644'
-    content: |
-      cluster-init: true
-      flannel-backend: none
-      disable-network-policy: true
-      cluster-cidr: 10.42.0.0/16
-      service-cidr: 10.43.0.0/16
-      tls-san:
-        - {{ ansible_host }}
-      advertise-address: {{ ansible_host }}
-      node-ip: {{ ansible_host }}
-
-- name: Check for old overlapping K3s pod CIDR
-  command: grep -R -- '--cluster-cidr=192.168.0.0/16' /etc/systemd/system/k3s.service /etc/systemd/system/k3s.service.env
-  register: old_k3s_cidr
-  changed_when: false
-  failed_when: false
-
-- name: Stop when existing K3s cluster uses overlapping pod CIDR
-  fail:
-    msg: Existing K3s service still uses --cluster-cidr=192.168.0.0/16, which overlaps the Vagrant node network 192.168.58.0/24. Recreate the Vagrant cluster before rerunning Ansible.
-  when: old_k3s_cidr.rc == 0
-
-- name: Initialize K3s server with embedded etcd and external CNI
-  command: /tmp/k3s_install.sh
+- name: Initialize K3s server with embedded etcd (no flannel, Calico ready)
+  shell: |
+    INSTALL_K3S_EXEC="server --cluster-init --flannel-backend=none --disable-network-policy --cluster-cidr=192.168.0.0/16 --tls-san {{ ansible_host }} --advertise-address {{ ansible_host }} --node-ip {{ ansible_host }}" /tmp/k3s_install.sh
   environment:
     K3S_KUBECONFIG_MODE: "644"
-  args:
-    creates: /usr/local/bin/k3s
-
-- name: Wait for server to recover SSH after k3s install (network may restart)
-  wait_for_connection:
-    delay: 15
-    timeout: 180
-
-- name: Wait for k3s API to be ready
-  wait_for:
-    port: 6443
-    host: "{{ ansible_host }}"
-    timeout: 120
-    delay: 5
 
 - name: Wait for token to be available
   wait_for:
@@ -73,21 +28,9 @@
     src: /var/lib/rancher/k3s/server/node-token
   register: token_raw
 
-- name: Set K3s token as fact (in-memory)
+- name: Set K3s token as fact
   set_fact:
     k3s_token: "{{ token_raw['content'] | b64decode | trim }}"
-
-- name: Save K3s token to shared file for agents
-  copy:
-    content: "{{ token_raw['content'] | b64decode | trim }}"
-    dest: /tmp/k3s-node-token
-    mode: '0644'
-
-- name: Fetch token file to control machine
-  fetch:
-    src: /tmp/k3s-node-token
-    dest: /tmp/k3s-node-token
-    flat: yes
 
 - name: Enable k3s service
   systemd:

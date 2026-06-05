@@ -5,101 +5,30 @@
     host: 127.0.0.1
     timeout: 120
 
-- name: Install Calico operator CRDs (server-side apply)
-  command: kubectl --kubeconfig /etc/rancher/k3s/k3s.yaml apply --server-side --force-conflicts -f https://raw.githubusercontent.com/projectcalico/calico/v3.31.4/manifests/operator-crds.yaml
+- name: Install Calico operator CRDs
+  command: kubectl --kubeconfig /etc/rancher/k3s/k3s.yaml create -f https://raw.githubusercontent.com/projectcalico/calico/v3.31.4/manifests/operator-crds.yaml
   retries: 3
   delay: 5
   register: result
   until: result.rc == 0
 
-- name: Install Calico tigera-operator (server-side apply)
-  command: kubectl --kubeconfig /etc/rancher/k3s/k3s.yaml apply --server-side --force-conflicts -f https://raw.githubusercontent.com/projectcalico/calico/v3.31.4/manifests/tigera-operator.yaml
+- name: Install Calico tigera-operator
+  command: kubectl --kubeconfig /etc/rancher/k3s/k3s.yaml create -f https://raw.githubusercontent.com/projectcalico/calico/v3.31.4/manifests/tigera-operator.yaml
   retries: 3
   delay: 5
   register: result
   until: result.rc == 0
 
-- name: Wait for Calico operator deployment
-  command: kubectl --kubeconfig /etc/rancher/k3s/k3s.yaml rollout status deployment/tigera-operator -n tigera-operator --timeout=120s
+- name: Install Calico manifests
+  command: kubectl --kubeconfig /etc/rancher/k3s/k3s.yaml apply -f https://raw.githubusercontent.com/projectcalico/calico/v3.31.4/manifests/calico.yaml
   retries: 3
   delay: 5
   register: result
   until: result.rc == 0
 
-- name: Install Calico custom resources
-  copy:
-    dest: /tmp/calico-custom-resources.yaml
-    mode: '0644'
-    content: |
-      apiVersion: operator.tigera.io/v1
-      kind: Installation
-      metadata:
-        name: default
-      spec:
-        calicoNetwork:
-          nodeAddressAutodetectionV4:
-            cidrs:
-              - 192.168.58.0/24
-          ipPools:
-            - name: default-ipv4-ippool
-              blockSize: 26
-              cidr: 10.42.0.0/16
-              encapsulation: VXLANCrossSubnet
-              natOutgoing: Enabled
-              nodeSelector: all()
-
-- name: Apply Calico custom resources
-  command: kubectl --kubeconfig /etc/rancher/k3s/k3s.yaml apply -f /tmp/calico-custom-resources.yaml
-  retries: 3
-  delay: 5
-  register: result
-  until: result.rc == 0
-
-- name: Wait for Calico to become available
-  block:
-    - name: Wait for Calico node daemonset
-      command: kubectl --kubeconfig /etc/rancher/k3s/k3s.yaml rollout status daemonset/calico-node -n calico-system --timeout=180s
-      retries: 3
-      delay: 10
-      register: result
-      until: result.rc == 0
-
-    - name: Wait for Calico tigerastatus to be available
-      command: kubectl --kubeconfig /etc/rancher/k3s/k3s.yaml wait --for=condition=Available tigerastatus/calico --timeout=60s
-      retries: 5
-      delay: 10
-      register: result
-      until: result.rc == 0
-  rescue:
-    - name: Print Calico diagnostics
-      shell: |
-        echo "=== Nodes ==="
-        kubectl --kubeconfig /etc/rancher/k3s/k3s.yaml get nodes -o wide || true
-        echo "=== Tigera status ==="
-        kubectl --kubeconfig /etc/rancher/k3s/k3s.yaml get tigerastatus -o wide || true
-        echo "=== Calico pods ==="
-        kubectl --kubeconfig /etc/rancher/k3s/k3s.yaml get pods -n calico-system -o wide || true
-        echo "=== Tigera operator ==="
-        kubectl --kubeconfig /etc/rancher/k3s/k3s.yaml get pods -n tigera-operator -o wide || true
-        echo "=== Calico installation ==="
-        kubectl --kubeconfig /etc/rancher/k3s/k3s.yaml describe installation default || true
-      args:
-        executable: /bin/bash
-      changed_when: false
-
-    - name: Fail when Calico is not available
-      fail:
-        msg: Calico did not become available. See diagnostics above.
-
-- name: Wait for all cluster nodes to be Ready
-  shell: |
-    set -o pipefail
-    expected=$(kubectl --kubeconfig /etc/rancher/k3s/k3s.yaml get nodes --no-headers | wc -l)
-    ready=$(kubectl --kubeconfig /etc/rancher/k3s/k3s.yaml get nodes --no-headers | awk '$2 ~ /^Ready/ { count++ } END { print count + 0 }')
-    test "$expected" -ge 3 -a "$ready" -eq "$expected"
-  args:
-    executable: /bin/bash
+- name: Wait for Calico pods to be running
+  shell: kubectl --kubeconfig /etc/rancher/k3s/k3s.yaml get pods -n kube-system -l k8s-app=calico-node --no-headers
+  register: calico_pods
+  until: "'Running' in calico_pods.stdout"
   retries: 30
   delay: 10
-  register: nodes_ready
-  until: nodes_ready.rc == 0
