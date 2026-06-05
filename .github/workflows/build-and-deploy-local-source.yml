@@ -237,7 +237,33 @@ jobs:
             sleep 10
             ansible-playbook -i inventory/hosts.yaml playbook.yml
           }
-
+      # ══════════════════════════════════════════════════════════════════════════
+      # CHÈN BƯỚC NÀY VÀO NGAY SAU PLAYBOOK — ĐỂ TỰ ĐỘNG CỨU HỘ AGENT & CALICO
+      # ══════════════════════════════════════════════════════════════════════════
+      - name: "[Cứu hộ Hệ thống] Tự động kích hoạt Agent và Dọn dẹp Calico bị kẹt"
+        shell: bash
+        run: |
+          export KUBECONFIG="$INFRA_DIR/kubeconfig"
+          echo "=== Khởi động quy trình tự động cứu hộ hạ tầng ==="
+          cd "$INFRA_DIR"
+          
+          # 1. Ép cả 2 máy Worker Agent khởi động lại dịch vụ k3s để tái đồng bộ với Master
+          for vm in k3s-agent-1 k3s-agent-2; do
+            echo "Đang kích hoạt lại k3s-agent trên máy $vm..."
+            vagrant ssh $vm -c "sudo systemctl restart k3s-agent" || true
+          done
+          
+          # Chờ 15 giây cho dịch vụ ổn định
+          sleep 15
+          
+          # 2. Xóa cưỡng bức (Force Delete) toàn bộ các Pod Calico cũ đang bị Treo/Kẹt 
+          # Việc này ép Kubernetes tạo lại Pod Calico mới nhận ngay card mạng eth1 đã patch
+          echo "Đang dọn dẹp các Pod Calico bị đóng băng trạng thái..."
+          kubectl delete pods -n kube-system -l k8s-app=calico-node --force --grace-period=0 2>/dev/null || true
+          
+          # 3. In ra trạng thái các Node để kiểm tra
+          echo "=== TRẠNG THÁI CÁC NODE HIỆN TẠI ==="
+          kubectl get nodes -o wide || true
       # ── SỬA LỖI TIMEOUT CALICO (Bản vá động trực tiếp từ Runner) ──
       - name: "[Fix] Force kick Calico mesh and ensure Agents Ready"
         shell: bash
