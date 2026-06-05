@@ -18,14 +18,15 @@
 
 - name: Install K3s agent and join cluster
   shell: |
-    INSTALL_K3S_EXEC="agent --node-ip={{ ansible_host }} --node-external-ip={{ ansible_host }} --flannel-iface=eth1" \
+    INSTALL_K3S_EXEC="agent --node-ip {{ ansible_host }}" \
     K3S_URL="https://{{ hostvars[groups['masters'][0]].ansible_host }}:6443" \
     K3S_TOKEN="{{ k3s_token }}" \
     /tmp/k3s_install.sh
-  # Bỏ thuộc tính 'creates' cũ để đảm bảo nếu cấu hình lỗi, Ansible vẫn có thể ghi đè/sửa lại cấu hình chuẩn.
+  args:
+    creates: /usr/local/bin/k3s
 
 - name: Enable k3s-agent service
   systemd:
     name: k3s-agent
     enabled: yes
-    state: restarted # Đổi từ started thành restarted để ép node cập nhật lại tham số mạng ngay lập tức
+    state: started
