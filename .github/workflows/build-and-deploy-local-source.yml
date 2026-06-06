@@ -130,14 +130,14 @@ jobs:
           echo "Waiting for all nodes..."
           kubectl get nodes -o wide
           kubectl wait --for=condition=Ready node/k3s-server-1 --timeout=600s
-          kubectl wait --for=condition=Ready node/k3s-agent-1 --timeout=900s
-          kubectl wait --for=condition=Ready node/k3s-agent-2 --timeout=900s
+          kubectl wait --for=condition=Ready node/k3s-agent-1 --timeout=600s
+          kubectl wait --for=condition=Ready node/k3s-agent-2 --timeout=600s
 
           echo "Waiting for Calico..."
           kubectl wait --for=condition=Ready pod \
             -n kube-system \
             -l k8s-app=calico-node \
-            --timeout=900s
+            --timeout=600s
 
           kubectl get nodes -o wide
           kubectl get pods -A -o wide
@@ -269,21 +269,46 @@ jobs:
         run: |
           set -e
           export KUBECONFIG="$INFRA_DIR/kubeconfig"
+          cd "$INFRA_DIR"
 
           echo "Checking K3s API /cacerts..."
           curl -k --fail https://192.168.58.11:6443/cacerts >/dev/null
 
-          echo "Checking all nodes before app deploy..."
-          kubectl get nodes -o wide
-          kubectl wait --for=condition=Ready node/k3s-server-1 --timeout=300s
-          kubectl wait --for=condition=Ready node/k3s-agent-1 --timeout=300s
-          kubectl wait --for=condition=Ready node/k3s-agent-2 --timeout=300s
+          echo "Initial node state..."
+          kubectl get nodes -o wide || true
 
-          echo "Checking Calico before app deploy..."
+          echo "Auto-heal Vagrant nodes if any worker is NotReady..."
+          if ! kubectl get node k3s-agent-1 -o jsonpath='{.status.conditions[?(@.type=="Ready")].status}' | grep -q True; then
+            echo "k3s-agent-1 is not Ready -> vagrant up"
+            vagrant up k3s-agent-1 --no-provision
+          fi
+
+          if ! kubectl get node k3s-agent-2 -o jsonpath='{.status.conditions[?(@.type=="Ready")].status}' | grep -q True; then
+            echo "k3s-agent-2 is not Ready -> vagrant up"
+            vagrant up k3s-agent-2 --no-provision
+          fi
+
+          echo "Refresh Vagrant SSH config..."
+          {
+            vagrant ssh-config k3s-server-1
+            vagrant ssh-config k3s-agent-1
+            vagrant ssh-config k3s-agent-2
+          } > .vagrant-ssh-config
+
+          echo "Wait for all nodes to become Ready..."
+          kubectl wait --for=condition=Ready node/k3s-server-1 --timeout=600s
+          kubectl wait --for=condition=Ready node/k3s-agent-1 --timeout=900s
+          kubectl wait --for=condition=Ready node/k3s-agent-2 --timeout=900s
+
+          echo "Wait for Calico..."
           kubectl wait --for=condition=Ready pod \
             -n kube-system \
             -l k8s-app=calico-node \
-            --timeout=300s
+            --timeout=900s
+
+          echo "Final cluster state..."
+          kubectl get nodes -o wide
+          kubectl get pods -n kube-system -o wide
 
       - name: Apply Kubernetes Manifests
         if: needs.detect-app-changes.outputs.need_deploy == 'true' || needs.detect-app-changes.outputs.need_build == 'true'
