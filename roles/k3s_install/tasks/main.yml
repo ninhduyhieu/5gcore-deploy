@@ -19,6 +19,11 @@
     state: absent
   when: reset_k3s_state | default(false) | bool
 
+- name: Remove corrupted kubelet actuated pods checkpoint
+  file:
+    path: /var/lib/kubelet/actuated_pods_state
+    state: absent
+
 - name: Execute K3s installation script (Server)
   shell: /tmp/k3s_install.sh
   environment:
@@ -63,7 +68,7 @@
     validate_certs: false
     status_code: 200
   register: k3s_cacerts
-  retries: 40
+  retries: 60
   delay: 5
   until: k3s_cacerts.status == 200
 

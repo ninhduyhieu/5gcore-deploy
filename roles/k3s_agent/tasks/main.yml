@@ -19,6 +19,11 @@
     state: absent
   when: reset_k3s_state | default(false) | bool
 
+- name: Remove corrupted kubelet actuated pods checkpoint
+  file:
+    path: /var/lib/kubelet/actuated_pods_state
+    state: absent
+
 - name: Wait for K3s server API from worker
   wait_for:
     host: "{{ hostvars[groups['masters'][0]].ansible_host }}"
@@ -39,4 +44,3 @@
     name: k3s-agent
     enabled: true
     state: started
-
