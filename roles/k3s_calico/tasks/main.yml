@@ -14,6 +14,13 @@
   register: result
   until: result.rc == 0
 
+- name: Force Calico to use Vagrant host-only interface
+  command: >
+    kubectl --kubeconfig /etc/rancher/k3s/k3s.yaml
+    set env daemonset/calico-node -n kube-system
+    IP_AUTODETECTION_METHOD=interface=enp0s8
+  changed_when: true
+
 - name: Wait for Calico node pods to be Ready
   command: >
     kubectl --kubeconfig /etc/rancher/k3s/k3s.yaml
