@@ -4,23 +4,38 @@
     name:
       - curl
     state: present
-    update_cache: yes
+    update_cache: true
 
 - name: Download K3s install script
   get_url:
     url: https://get.k3s.io
     dest: /tmp/k3s_install.sh
     mode: '0755'
+    validate_certs: false
+
+- name: Remove stale/corrupted K3s agent containerd state
+  file:
+    path: /var/lib/rancher/k3s/agent/containerd
+    state: absent
+  when: reset_k3s_state | default(false) | bool
+
+- name: Wait for K3s server API from worker
+  wait_for:
+    host: "{{ hostvars[groups['masters'][0]].ansible_host }}"
+    port: 6443
+    timeout: 300
 
 - name: Install K3s agent and join cluster
   shell: |
-    INSTALL_K3S_EXEC="agent --node-ip {{ ansible_host }}" \
+    INSTALL_K3S_EXEC="agent --node-ip={{ ansible_host }}" \
     K3S_URL="https://{{ hostvars[groups['masters'][0]].ansible_host }}:6443" \
     K3S_TOKEN="{{ hostvars[groups['masters'][0]].k3s_token }}" \
     /tmp/k3s_install.sh
+  args:
+    creates: /etc/systemd/system/k3s-agent.service
 
 - name: Enable k3s-agent service
   systemd:
     name: k3s-agent
-    enabled: yes
+    enabled: true
     state: started

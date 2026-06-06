@@ -8,7 +8,12 @@
 
 - name: Write kubeconfig locally with correct server address
   copy:
-    content: "{{ kubeconfig_raw['content'] | b64decode | replace('127.0.0.1', ansible_host) }}"
+    content: >-
+      {{
+        kubeconfig_raw['content']
+        | b64decode
+        | replace('127.0.0.1', hostvars[groups['masters'][0]].ansible_host)
+      }}
     dest: "{{ lookup('env', 'PWD') }}/kubeconfig"
     mode: '0600'
   delegate_to: localhost

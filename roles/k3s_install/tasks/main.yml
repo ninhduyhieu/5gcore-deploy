@@ -13,7 +13,12 @@
     mode: '0755'
     validate_certs: false
 
-# 🌟 TASK ĐƯỢC BỔ SUNG: Chạy script cài đặt K3s Server
+- name: Remove stale/corrupted K3s server containerd state
+  file:
+    path: /var/lib/rancher/k3s/agent/containerd
+    state: absent
+  when: reset_k3s_state | default(false) | bool
+
 - name: Execute K3s installation script (Server)
   shell: /tmp/k3s_install.sh
   environment:
@@ -31,10 +36,17 @@
   args:
     creates: /var/lib/rancher/k3s/server/node-token
 
+- name: Enable k3s service
+  systemd:
+    name: k3s
+    enabled: true
+    state: started
+
 - name: Wait for token to be available
   wait_for:
     path: /var/lib/rancher/k3s/server/node-token
-    timeout: 120
+    state: present
+    timeout: 300
 
 - name: Read K3s node-token
   slurp:
@@ -45,11 +57,15 @@
   set_fact:
     k3s_token: "{{ token_raw['content'] | b64decode | trim }}"
 
-- name: Enable k3s service
-  systemd:
-    name: k3s
-    enabled: true
-    state: started
+- name: Wait for K3s /cacerts endpoint
+  uri:
+    url: https://127.0.0.1:6443/cacerts
+    validate_certs: false
+    status_code: 200
+  register: k3s_cacerts
+  retries: 40
+  delay: 5
+  until: k3s_cacerts.status == 200
 
 - name: Allow vagrant user to read kubeconfig
   shell: |
@@ -57,3 +73,4 @@
     chgrp k3s-readers /etc/rancher/k3s/k3s.yaml
     chmod 640 /etc/rancher/k3s/k3s.yaml
     usermod -aG k3s-readers vagrant
+  changed_when: true

@@ -3,7 +3,7 @@
   wait_for:
     port: 6443
     host: 127.0.0.1
-    timeout: 120
+    timeout: 180
 
 - name: Install Calico manifests
   command: >
@@ -13,6 +13,7 @@
   delay: 5
   register: result
   until: result.rc == 0
+  changed_when: true
 
 - name: Force Calico to use Vagrant host-only interface
   command: >

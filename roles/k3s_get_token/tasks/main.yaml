@@ -13,3 +13,14 @@
 - name: Set fact with K3s token
   set_fact:
     k3s_token: "{{ token_raw['content'] | b64decode | trim }}"
+
+# Quan trọng: đợi API server thực sự sẵn sàng
+- name: Wait for K3s /cacerts endpoint
+  uri:
+    url: https://127.0.0.1:6443/cacerts
+    validate_certs: false
+    status_code: 200
+  register: k3s_cacerts
+  retries: 40
+  delay: 5
+  until: k3s_cacerts.status == 200
