@@ -17,7 +17,7 @@
 - name: Execute K3s installation script (Server)
   shell: /tmp/k3s_install.sh
   environment:
-    INSTALL_K3S_EXEC: "server --disable traefik --tls-san=192.168.58.11 --node-ip=192.168.58.11 --bind-address=192.168.58.11"
+    INSTALL_K3S_EXEC: "server --disable traefik --flannel-backend=none --disable-network-policy --cluster-cidr=172.16.0.0/16 --service-cidr=10.43.0.0/16 --tls-san=192.168.58.11 --node-ip=192.168.58.11 --advertise-address=192.168.58.11 --bind-address=192.168.58.11"
   args:
     creates: /var/lib/rancher/k3s/server/node-token
 
