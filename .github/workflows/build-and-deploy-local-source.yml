@@ -130,14 +130,14 @@ jobs:
           echo "Waiting for all nodes..."
           kubectl get nodes -o wide
           kubectl wait --for=condition=Ready node/k3s-server-1 --timeout=600s
-          kubectl wait --for=condition=Ready node/k3s-agent-1 --timeout=600s
-          kubectl wait --for=condition=Ready node/k3s-agent-2 --timeout=600s
+          kubectl wait --for=condition=Ready node/k3s-agent-1 --timeout=900s
+          kubectl wait --for=condition=Ready node/k3s-agent-2 --timeout=900s
 
           echo "Waiting for Calico..."
           kubectl wait --for=condition=Ready pod \
             -n kube-system \
             -l k8s-app=calico-node \
-            --timeout=600s
+            --timeout=900s
 
           kubectl get nodes -o wide
           kubectl get pods -A -o wide
