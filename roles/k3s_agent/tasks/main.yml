@@ -26,14 +26,14 @@
 
 - name: Wait for K3s server API from worker
   wait_for:
-    host: "{{ hostvars[groups['masters'][0]].ansible_host }}"
+    host: "{{ hostvars[groups['masters'][0]].node_ip }}"
     port: 6443
     timeout: 300
 
 - name: Install K3s agent and join cluster
   shell: |
-    INSTALL_K3S_EXEC="agent --node-ip={{ ansible_host }}" \
-    K3S_URL="https://{{ hostvars[groups['masters'][0]].ansible_host }}:6443" \
+    INSTALL_K3S_EXEC="agent --node-ip={{ node_ip }}" \
+    K3S_URL="https://{{ hostvars[groups['masters'][0]].node_ip }}:6443" \
     K3S_TOKEN="{{ hostvars[groups['masters'][0]].k3s_token }}" \
     /tmp/k3s_install.sh
   args:
