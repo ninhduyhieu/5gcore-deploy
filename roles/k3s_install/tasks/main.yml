@@ -34,10 +34,10 @@
       --disable-network-policy
       --cluster-cidr=172.16.0.0/16
       --service-cidr=10.43.0.0/16
-      --tls-san=192.168.58.11
-      --node-ip=192.168.58.11
-      --advertise-address=192.168.58.11
-      --bind-address=192.168.58.11
+      --tls-san={{ node_ip }}
+      --node-ip={{ node_ip }}
+      --advertise-address={{ node_ip }}
+      --bind-address={{ node_ip }}
   args:
     creates: /var/lib/rancher/k3s/server/node-token
 
@@ -49,13 +49,13 @@
 
 - name: Wait for K3s server /cacerts
   uri:
-    url: "https://{{ hostvars[groups['masters'][0]].ansible_host }}:6443/cacerts"
+    url: "https://127.0.0.1:6443/cacerts"
     validate_certs: false
     status_code: 200
-  register: k3s_api
+  register: k3s_cacerts
   retries: 60
   delay: 5
-  until: k3s_api.status == 200
+  until: k3s_cacerts.status == 200
 
 - name: Read K3s node-token
   slurp:
