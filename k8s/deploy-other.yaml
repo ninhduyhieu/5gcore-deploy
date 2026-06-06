@@ -277,7 +277,7 @@ metadata:
   name: amf-10-100-agent2-dep
   namespace: etri6g
 spec:
-  replicas: 1
+  replicas: 2
   selector:
     matchLabels:
       app: amf
