@@ -1,11 +1,11 @@
 all:
   hosts:
     k3s-server-1:
-      ansible_host: 192.168.58.11
+      ansible_host: k3s-server-1
     k3s-agent-1:
-      ansible_host: 192.168.58.12
+      ansible_host: k3s-agent-1
     k3s-agent-2:
-      ansible_host: 192.168.58.13
+      ansible_host: k3s-agent-2
 
   children:
     masters:
@@ -18,6 +18,5 @@ all:
 
   vars:
     ansible_user: vagrant
-    ansible_ssh_private_key_file: ".vagrant/machines/{{ inventory_hostname }}/virtualbox/private_key"
-    ansible_ssh_common_args: "-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null"
+    ansible_ssh_common_args: "-F /home/hieu/5gcore-deploy/.vagrant-ssh-config"
     ansible_python_interpreter: /usr/bin/python3
