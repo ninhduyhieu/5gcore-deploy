@@ -47,11 +47,15 @@
     enabled: true
     state: started
 
-- name: Wait for token to be available
-  wait_for:
-    path: /var/lib/rancher/k3s/server/node-token
-    state: present
-    timeout: 300
+- name: Wait for K3s server /cacerts
+  uri:
+    url: "https://{{ hostvars[groups['masters'][0]].ansible_host }}:6443/cacerts"
+    validate_certs: false
+    status_code: 200
+  register: k3s_api
+  retries: 60
+  delay: 5
+  until: k3s_api.status == 200
 
 - name: Read K3s node-token
   slurp:
