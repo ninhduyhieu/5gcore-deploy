@@ -34,3 +34,4 @@
   register: calico_ready
   until: calico_ready.rc == 0
   changed_when: false
+
