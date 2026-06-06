@@ -288,12 +288,8 @@ jobs:
             vagrant up k3s-agent-2 --no-provision
           fi
 
-          echo "Refresh Vagrant SSH config..."
-          {
-            vagrant ssh-config k3s-server-1
-            vagrant ssh-config k3s-agent-1
-            vagrant ssh-config k3s-agent-2
-          } > .vagrant-ssh-config
+          echo "Give kubelet and Calico time to settle..."
+          sleep 120
 
           echo "Wait for all nodes to become Ready..."
           kubectl wait --for=condition=Ready node/k3s-server-1 --timeout=600s
