@@ -68,6 +68,8 @@ jobs:
           fi
 
           CHANGED=$(git diff --name-only HEAD~1 HEAD 2>/dev/null || true)
+          echo "Changed files:"
+          echo "$CHANGED"
 
           NEED_INFRA=false
           NEED_BUILD=false
@@ -138,13 +140,8 @@ jobs:
             TAG="sha-$(echo ${{ github.sha }} | cut -c1-7)"
           fi
 
-          if [ -z "$OWNER" ]; then
-            OWNER="ninhduyhieu"
-          fi
-
-          if [ -z "$TAG" ]; then
-            TAG="latest"
-          fi
+          [ -z "$OWNER" ] && OWNER="ninhduyhieu"
+          [ -z "$TAG" ] && TAG="latest"
 
           echo "OWNER=$OWNER"
           echo "TAG=$TAG"
@@ -187,45 +184,64 @@ jobs:
             vagrant ssh "$vm" -c "echo SSH_OK_$vm"
           done
 
-      - name: Generate Ansible inventory using Vagrant SSH aliases
+      - name: Generate Ansible inventory from Vagrant SSH config
         shell: bash
         run: |
           set -e
           cd "$INFRA_DIR"
 
-          cat > .ansible-vagrant-inventory.yaml <<'EOF'
-          all:
-            hosts:
-              k3s-server-1:
-                ansible_host: k3s-server-1
-                ansible_user: vagrant
-                ansible_python_interpreter: /usr/bin/python3
-                node_ip: 192.168.58.11
-              k3s-agent-1:
-                ansible_host: k3s-agent-1
-                ansible_user: vagrant
-                ansible_python_interpreter: /usr/bin/python3
-                node_ip: 192.168.58.12
-              k3s-agent-2:
-                ansible_host: k3s-agent-2
-                ansible_user: vagrant
-                ansible_python_interpreter: /usr/bin/python3
-                node_ip: 192.168.58.13
-            children:
-              masters:
-                hosts:
-                  k3s-server-1:
-              workers:
-                hosts:
-                  k3s-agent-1:
-                  k3s-agent-2:
-          EOF
+          get_cfg() {
+            local vm="$1"
+            local key="$2"
+            vagrant ssh-config "$vm" | awk -v k="$key" '$1 == k {print $2; exit}'
+          }
 
-          sed -i 's/^          //' .ansible-vagrant-inventory.yaml
+          rm -f .ansible-vagrant-inventory.yaml
+
+          {
+            echo "all:"
+            echo "  hosts:"
+          } >> .ansible-vagrant-inventory.yaml
+
+          for vm in k3s-server-1 k3s-agent-1 k3s-agent-2; do
+            HOST=$(get_cfg "$vm" HostName)
+            PORT=$(get_cfg "$vm" Port)
+            USER=$(get_cfg "$vm" User)
+            KEY=$(get_cfg "$vm" IdentityFile | tr -d '"')
+
+            if [ "$vm" = "k3s-server-1" ]; then
+              NODE_IP="192.168.58.11"
+            elif [ "$vm" = "k3s-agent-1" ]; then
+              NODE_IP="192.168.58.12"
+            else
+              NODE_IP="192.168.58.13"
+            fi
+
+            {
+              echo "    $vm:"
+              echo "      ansible_host: $HOST"
+              echo "      ansible_port: $PORT"
+              echo "      ansible_user: $USER"
+              echo "      ansible_ssh_private_key_file: $KEY"
+              echo "      ansible_ssh_common_args: '-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null'"
+              echo "      ansible_python_interpreter: /usr/bin/python3"
+              echo "      node_ip: $NODE_IP"
+            } >> .ansible-vagrant-inventory.yaml
+          done
+
+          {
+            echo "  children:"
+            echo "    masters:"
+            echo "      hosts:"
+            echo "        k3s-server-1:"
+            echo "    workers:"
+            echo "      hosts:"
+            echo "        k3s-agent-1:"
+            echo "        k3s-agent-2:"
+          } >> .ansible-vagrant-inventory.yaml
 
           echo "=== Generated Ansible inventory ==="
           cat .ansible-vagrant-inventory.yaml
-
       - name: Release APT locks on VMs
         if: needs.detect-changes.outputs.need_infra == 'true'
         shell: bash
@@ -248,7 +264,6 @@ jobs:
           cd "$INFRA_DIR"
 
           ANSIBLE_HOST_KEY_CHECKING=False \
-          ANSIBLE_SSH_COMMON_ARGS="-F $INFRA_DIR/.vagrant-ssh-config -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null" \
           ansible-playbook -i .ansible-vagrant-inventory.yaml playbook.yml
 
       - name: Cluster Health Check with Auto-Heal
@@ -339,13 +354,8 @@ jobs:
           OWNER="${{ needs.infra-ensure.outputs.image_owner }}"
           TAG="${{ needs.infra-ensure.outputs.image_tag }}"
 
-          if [ -z "$OWNER" ]; then
-            OWNER="ninhduyhieu"
-          fi
-
-          if [ -z "$TAG" ]; then
-            TAG="latest"
-          fi
+          [ -z "$OWNER" ] && OWNER="ninhduyhieu"
+          [ -z "$TAG" ] && TAG="latest"
 
           echo "IMAGE_OWNER=$OWNER"
           echo "IMAGE_TAG=$TAG"
@@ -368,13 +378,8 @@ jobs:
           OWNER="${{ needs.infra-ensure.outputs.image_owner }}"
           TAG="${{ needs.infra-ensure.outputs.image_tag }}"
 
-          if [ -z "$OWNER" ]; then
-            OWNER="ninhduyhieu"
-          fi
-
-          if [ -z "$TAG" ]; then
-            TAG="latest"
-          fi
+          [ -z "$OWNER" ] && OWNER="ninhduyhieu"
+          [ -z "$TAG" ] && TAG="latest"
 
           echo "Building with OWNER=$OWNER TAG=$TAG"
 
@@ -460,13 +465,8 @@ jobs:
           OWNER="${{ needs.infra-ensure.outputs.image_owner }}"
           TAG="${{ needs.infra-ensure.outputs.image_tag }}"
 
-          if [ -z "$OWNER" ]; then
-            OWNER="ninhduyhieu"
-          fi
-
-          if [ -z "$TAG" ]; then
-            TAG="latest"
-          fi
+          [ -z "$OWNER" ] && OWNER="ninhduyhieu"
+          [ -z "$TAG" ] && TAG="latest"
 
           kubectl create namespace etri6g --dry-run=client -o yaml | kubectl apply -f -
 
