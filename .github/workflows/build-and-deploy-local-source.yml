@@ -17,7 +17,7 @@ on:
 
 concurrency:
   group: deploy-${{ github.ref }}
-  cancel-in-progress: false
+  cancel-in-progress: true
 
 jobs:
   validate:
@@ -38,15 +38,103 @@ jobs:
       - name: Check Ansible playbook syntax
         run: ansible-playbook --syntax-check -i inventory/hosts.yaml playbook.yml
 
-  infra-ensure:
-    name: "CD · Ensure Infra Healthy"
-    runs-on: [self-hosted, linux, x64]
+  plan:
+    name: "CI · Detect Changes"
+    runs-on: ubuntu-latest
     needs: validate
+    outputs:
+      need_infra: ${{ steps.detect.outputs.need_infra }}
+      need_build: ${{ steps.detect.outputs.need_build }}
+      need_deploy: ${{ steps.detect.outputs.need_deploy }}
+      need_monitoring: ${{ steps.detect.outputs.need_monitoring }}
+      need_webui: ${{ steps.detect.outputs.need_webui }}
+      image_owner: ${{ steps.vars.outputs.owner }}
+      image_tag: ${{ steps.vars.outputs.tag }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+
+      - name: Generate/Resolve image tag
+        id: vars
+        shell: bash
+        run: |
+          set -e
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            OWNER="${{ inputs.image_owner }}"
+            if [ "${{ inputs.image_tag }}" = "latest" ]; then
+              TAG="manual-$(date +%Y%m%d-%H%M%S)"
+            else
+              TAG="${{ inputs.image_tag }}"
+            fi
+          else
+            OWNER="ninhduyhieu"
+            TAG="sha-$(echo ${{ github.sha }} | cut -c1-7)"
+          fi
+
+          echo "owner=${OWNER}" >> "$GITHUB_OUTPUT"
+          echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
+
+      - name: Check changed paths
+        id: detect
+        shell: bash
+        run: |
+          set -e
+
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "need_infra=true" >> "$GITHUB_OUTPUT"
+            echo "need_build=true" >> "$GITHUB_OUTPUT"
+            echo "need_deploy=true" >> "$GITHUB_OUTPUT"
+            echo "need_monitoring=true" >> "$GITHUB_OUTPUT"
+            echo "need_webui=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          CHANGED="$(git diff --name-only HEAD~1 HEAD 2>/dev/null || true)"
+          echo "Changed files:"
+          echo "$CHANGED"
+
+          has_change() {
+            echo "$CHANGED" | grep -qE "$1"
+          }
+
+          NEED_INFRA=false
+          NEED_BUILD=false
+          NEED_DEPLOY=false
+          NEED_MONITORING=false
+          NEED_WEBUI=false
+
+          if [ -z "$CHANGED" ]; then
+            NEED_INFRA=true
+            NEED_BUILD=true
+            NEED_DEPLOY=true
+            NEED_MONITORING=true
+            NEED_WEBUI=true
+          else
+            has_change '(^Vagrantfile$|^ansible\.cfg$|^inventory/|^roles/|^playbook\.yml$|^flake\.|^\.envrc$)' && NEED_INFRA=true
+            has_change '(^docker/|nf\.Dockerfile$)' && NEED_BUILD=true
+            has_change '(^k8s/|^scripts/render-ghcr-images\.sh$)' && NEED_DEPLOY=true
+            has_change '^observability/' && NEED_MONITORING=true
+            has_change '^webui/' && NEED_WEBUI=true
+          fi
+
+          # If image is rebuilt, manifests must be rendered and applied with the new image tag.
+          if [ "$NEED_BUILD" = "true" ]; then
+            NEED_DEPLOY=true
+          fi
+
+          echo "need_infra=$NEED_INFRA" >> "$GITHUB_OUTPUT"
+          echo "need_build=$NEED_BUILD" >> "$GITHUB_OUTPUT"
+          echo "need_deploy=$NEED_DEPLOY" >> "$GITHUB_OUTPUT"
+          echo "need_monitoring=$NEED_MONITORING" >> "$GITHUB_OUTPUT"
+          echo "need_webui=$NEED_WEBUI" >> "$GITHUB_OUTPUT"
+
+  infra-ensure:
+    name: "CD · Ensure Vagrant/K3s Healthy"
+    runs-on: [self-hosted, linux, x64]
+    needs: plan
     env:
       INFRA_DIR: ${{ vars.INFRA_DIR || '' }}
-    outputs:
-      image_tag: ${{ steps.vars.outputs.tag }}
-      image_owner: ${{ steps.vars.outputs.owner }}
     steps:
       - name: Checkout infra repo
         uses: actions/checkout@v4
@@ -68,31 +156,32 @@ jobs:
             --exclude 'kubeconfig' \
             "$GITHUB_WORKSPACE"/ "$INFRA_DIR"/
 
-      - name: Generate/Resolve image tag
-        id: vars
-        shell: bash
-        run: |
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            OWNER="${{ inputs.image_owner }}"
-            if [ "${{ inputs.image_tag }}" = "latest" ]; then
-              TAG="manual-$(date +%Y%m%d-%H%M%S)"
-            else
-              TAG="${{ inputs.image_tag }}"
-            fi
-          else
-            OWNER="ninhduyhieu"
-            TAG="sha-$(echo ${{ github.sha }} | cut -c1-7)"
-          fi
-
-          echo "owner=${OWNER}" >> "$GITHUB_OUTPUT"
-          echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
-
       - name: Ensure Vagrant VMs are running
+        shell: bash
         run: |
           set -e
           cd "$INFRA_DIR"
 
-          vagrant up --no-parallel
+          echo "=== Vagrant status before boot ==="
+          vagrant status || true
+
+          for vm in k3s-server-1 k3s-agent-1 k3s-agent-2; do
+            state="$(vagrant status "$vm" --machine-readable | awk -F, '/,state,/{print $4}' | tail -1)"
+            echo "$vm state: ${state:-unknown}"
+
+            if [ "$state" = "aborted" ] || [ "$state" = "saved" ]; then
+              echo "$vm is in $state state -> forcing halt first"
+              vagrant halt -f "$vm" || true
+            fi
+
+            if [ "$state" != "running" ]; then
+              echo "Starting $vm..."
+              timeout 20m vagrant up "$vm" --no-provision
+            fi
+          done
+
+          echo "=== Vagrant status after boot ==="
+          vagrant status
 
           {
             vagrant ssh-config k3s-server-1
@@ -100,23 +189,26 @@ jobs:
             vagrant ssh-config k3s-agent-2
           } > .vagrant-ssh-config
 
-      - name: Release APT locks on VMs
-        shell: bash
-        run: |
-          cd "$INFRA_DIR"
           for vm in k3s-server-1 k3s-agent-1 k3s-agent-2; do
-            vagrant ssh "$vm" -c \
-              "sudo killall -9 apt-get apt dpkg 2>/dev/null || true; \
-               sudo rm -f /var/lib/dpkg/lock-frontend /var/lib/apt/lists/lock /var/lib/dpkg/lock; \
-               sudo dpkg --configure -a || true" || true
+            timeout 2m vagrant ssh "$vm" -c "echo SSH_OK_$vm"
           done
 
-      - name: Apply Ansible configuration
+      - name: Apply Ansible configuration when infra changed
+        if: needs.plan.outputs.need_infra == 'true'
         shell: bash
         run: |
           set -e
           cd "$INFRA_DIR"
-          ansible-playbook -i inventory/hosts.yaml playbook.yml
+
+          # Do not kill apt/dpkg aggressively. Finish interrupted dpkg only.
+          for vm in k3s-server-1 k3s-agent-1 k3s-agent-2; do
+            vagrant ssh "$vm" -c "sudo dpkg --configure -a || true" || true
+          done
+
+          ansible-playbook \
+            -i inventory/hosts.yaml \
+            -e "ansible_ssh_common_args=-F $INFRA_DIR/.vagrant-ssh-config" \
+            playbook.yml
 
       - name: Cluster Health Check
         shell: bash
@@ -125,71 +217,27 @@ jobs:
           export KUBECONFIG="$INFRA_DIR/kubeconfig"
 
           echo "Checking K3s API /cacerts..."
-          curl -k --fail https://192.168.58.11:6443/cacerts >/dev/null
+          curl -k --fail --max-time 30 https://192.168.58.11:6443/cacerts >/dev/null
 
           echo "Waiting for all nodes..."
           kubectl get nodes -o wide
           kubectl wait --for=condition=Ready node/k3s-server-1 --timeout=600s
-          kubectl wait --for=condition=Ready node/k3s-agent-1 --timeout=600s
-          kubectl wait --for=condition=Ready node/k3s-agent-2 --timeout=600s
+          kubectl wait --for=condition=Ready node/k3s-agent-1 --timeout=900s
+          kubectl wait --for=condition=Ready node/k3s-agent-2 --timeout=900s
 
           echo "Waiting for Calico..."
           kubectl wait --for=condition=Ready pod \
             -n kube-system \
             -l k8s-app=calico-node \
-            --timeout=600s
+            --timeout=900s
 
           kubectl get nodes -o wide
           kubectl get pods -A -o wide
 
-  detect-app-changes:
-    name: "Detect App Changes"
-    runs-on: ubuntu-latest
-    outputs:
-      need_build: ${{ steps.detect.outputs.need_build }}
-      need_deploy: ${{ steps.detect.outputs.need_deploy }}
-      need_webui: ${{ steps.detect.outputs.need_webui }}
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          fetch-depth: 2
-
-      - name: Check artifact directories
-        id: detect
-        shell: bash
-        run: |
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            echo "need_build=true" >> "$GITHUB_OUTPUT"
-            echo "need_deploy=true" >> "$GITHUB_OUTPUT"
-            echo "need_webui=true" >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
-
-          CHANGED=$(git diff --name-only HEAD~1 HEAD 2>/dev/null || echo "")
-          has_change() { echo "$CHANGED" | grep -qE "$1"; }
-
-          BUILD=false
-          DEPLOY=false
-          WEBUI=false
-
-          if [ -z "$CHANGED" ]; then
-            BUILD=true
-            DEPLOY=true
-            WEBUI=true
-          else
-            has_change 'docker/|nf\.Dockerfile' && BUILD=true
-            has_change 'k8s/|scripts/|observability/' && DEPLOY=true
-            has_change 'webui/' && WEBUI=true
-          fi
-
-          echo "need_build=$BUILD" >> "$GITHUB_OUTPUT"
-          echo "need_deploy=$DEPLOY" >> "$GITHUB_OUTPUT"
-          echo "need_webui=$WEBUI" >> "$GITHUB_OUTPUT"
-
   app-delivery:
-    name: "CD · Build & Deploy Application"
+    name: "CD · Build, Deploy, Monitor, WebUI"
     runs-on: [self-hosted, linux, x64]
-    needs: [infra-ensure, detect-app-changes]
+    needs: [plan, infra-ensure]
     env:
       INFRA_DIR: ${{ vars.INFRA_DIR || '' }}
       SOURCE_DIR: ${{ vars.SOURCE_DIR || '' }}
@@ -211,14 +259,16 @@ jobs:
         shell: bash
         run: |
           set -e
+          mkdir -p "$INFRA_DIR"
           rsync -a --delete \
             --exclude '.git/' \
             --exclude '.vagrant/' \
+            --exclude '.venv/' \
             --exclude 'kubeconfig' \
             "$GITHUB_WORKSPACE"/ "$INFRA_DIR"/
 
       - name: Login to GHCR
-        if: needs.detect-app-changes.outputs.need_build == 'true'
+        if: needs.plan.outputs.need_build == 'true'
         uses: docker/login-action@v3
         with:
           registry: ghcr.io
@@ -226,7 +276,7 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Build & Push 5G Core Images
-        if: needs.detect-app-changes.outputs.need_build == 'true'
+        if: needs.plan.outputs.need_build == 'true'
         shell: bash
         run: |
           set -e
@@ -234,8 +284,8 @@ jobs:
           chmod +x copybuild.sh
           ./copybuild.sh
 
-          OWNER="${{ needs.infra-ensure.outputs.image_owner }}"
-          TAG="${{ needs.infra-ensure.outputs.image_tag }}"
+          OWNER="${{ needs.plan.outputs.image_owner }}"
+          TAG="${{ needs.plan.outputs.image_tag }}"
           BUILD_OPTS="--memory=2g --cpu-shares=512"
 
           docker build $BUILD_OPTS \
@@ -244,6 +294,7 @@ jobs:
             -t "ghcr.io/${OWNER}/b5gc-base:latest" \
             -f nf.Dockerfile .
           docker push "ghcr.io/${OWNER}/b5gc-base:${TAG}"
+          docker push "ghcr.io/${OWNER}/b5gc-base:latest"
 
           for module in controller gateway nsm; do
             docker build $BUILD_OPTS \
@@ -252,6 +303,7 @@ jobs:
               -t "ghcr.io/${OWNER}/b5gc-${module}:latest" \
               -f nf.Dockerfile .
             docker push "ghcr.io/${OWNER}/b5gc-${module}:${TAG}"
+            docker push "ghcr.io/${OWNER}/b5gc-${module}:latest"
           done
 
           for nf in ausf udm pcf damf amf smf pran; do
@@ -261,53 +313,27 @@ jobs:
               -t "ghcr.io/${OWNER}/b5gc-${nf}:latest" \
               -f nf.Dockerfile .
             docker push "ghcr.io/${OWNER}/b5gc-${nf}:${TAG}"
+            docker push "ghcr.io/${OWNER}/b5gc-${nf}:latest"
           done
 
       - name: Pre-deploy Cluster Gate
-        if: needs.detect-app-changes.outputs.need_deploy == 'true' || needs.detect-app-changes.outputs.need_build == 'true'
+        if: needs.plan.outputs.need_deploy == 'true' || needs.plan.outputs.need_monitoring == 'true' || needs.plan.outputs.need_webui == 'true'
         shell: bash
         run: |
           set -e
           export KUBECONFIG="$INFRA_DIR/kubeconfig"
-          cd "$INFRA_DIR"
 
           echo "Checking K3s API /cacerts..."
-          curl -k --fail https://192.168.58.11:6443/cacerts >/dev/null
+          curl -k --fail --max-time 30 https://192.168.58.11:6443/cacerts >/dev/null
 
-          echo "Initial node state..."
-          kubectl get nodes -o wide || true
-
-          echo "Auto-heal Vagrant nodes if any worker is NotReady..."
-          if ! kubectl get node k3s-agent-1 -o jsonpath='{.status.conditions[?(@.type=="Ready")].status}' | grep -q True; then
-            echo "k3s-agent-1 is not Ready -> vagrant up"
-            vagrant up k3s-agent-1 --no-provision
-          fi
-
-          if ! kubectl get node k3s-agent-2 -o jsonpath='{.status.conditions[?(@.type=="Ready")].status}' | grep -q True; then
-            echo "k3s-agent-2 is not Ready -> vagrant up"
-            vagrant up k3s-agent-2 --no-provision
-          fi
-
-          echo "Give kubelet and Calico time to settle..."
-          sleep 120
-
-          echo "Wait for all nodes to become Ready..."
-          kubectl wait --for=condition=Ready node/k3s-server-1 --timeout=600s
-          kubectl wait --for=condition=Ready node/k3s-agent-1 --timeout=900s
-          kubectl wait --for=condition=Ready node/k3s-agent-2 --timeout=900s
-
-          echo "Wait for Calico..."
-          kubectl wait --for=condition=Ready pod \
-            -n kube-system \
-            -l k8s-app=calico-node \
-            --timeout=900s
-
-          echo "Final cluster state..."
+          echo "Node state..."
           kubectl get nodes -o wide
-          kubectl get pods -n kube-system -o wide
+          kubectl wait --for=condition=Ready node/k3s-server-1 --timeout=300s
+          kubectl wait --for=condition=Ready node/k3s-agent-1 --timeout=300s
+          kubectl wait --for=condition=Ready node/k3s-agent-2 --timeout=300s
 
       - name: Apply Kubernetes Manifests
-        if: needs.detect-app-changes.outputs.need_deploy == 'true' || needs.detect-app-changes.outputs.need_build == 'true'
+        if: needs.plan.outputs.need_deploy == 'true'
         shell: bash
         run: |
           set -e
@@ -317,8 +343,8 @@ jobs:
           kubectl create namespace etri6g --dry-run=client -o yaml | kubectl apply -f -
 
           ./scripts/render-ghcr-images.sh \
-            "${{ needs.infra-ensure.outputs.image_owner }}" \
-            "${{ needs.infra-ensure.outputs.image_tag }}" \
+            "${{ needs.plan.outputs.image_owner }}" \
+            "${{ needs.plan.outputs.image_tag }}" \
             rendered
 
           for f in ctrl gw nsm mongo deploy-other pran; do
@@ -326,7 +352,7 @@ jobs:
           done
 
       - name: Wait for 5GC Deployments
-        if: needs.detect-app-changes.outputs.need_deploy == 'true' || needs.detect-app-changes.outputs.need_build == 'true'
+        if: needs.plan.outputs.need_deploy == 'true'
         shell: bash
         run: |
           set -e
@@ -341,26 +367,56 @@ jobs:
             kubectl rollout status "deployment/${dep}" -n etri6g --timeout=300s
           done
 
-      # Tạm tắt monitoring để tránh làm nặng cluster trong lúc ổn định 5GC.
-      # Bật lại sau khi toàn bộ pod etri6g Running ổn định.
-      # - name: Deploy Monitoring Stack
-      #   if: needs.detect-app-changes.outputs.need_deploy == 'true' || needs.detect-app-changes.outputs.need_build == 'true'
-      #   shell: bash
-      #   run: |
-      #     set -e
-      #     export KUBECONFIG="$INFRA_DIR/kubeconfig"
-      #     kubectl create namespace observability --dry-run=client -o yaml | kubectl apply -f -
-      #     helm repo add grafana https://grafana.github.io/helm-charts
-      #     helm repo update
-      #     helm upgrade --install loki grafana/loki -n observability -f "$INFRA_DIR/observability/loki-values.yaml" --wait --timeout 5m
-      #     helm upgrade --install alloy grafana/alloy -n observability -f "$INFRA_DIR/observability/alloy-values.yaml" --wait --timeout 5m
-      #     helm upgrade --install grafana grafana/grafana -n observability -f "$INFRA_DIR/observability/grafana-values.yaml" --wait --timeout 5m
-
-      - name: Restart Dashboard Application
-        if: needs.detect-app-changes.outputs.need_webui == 'true'
+      - name: Deploy Loki, Alloy and Grafana
+        if: needs.plan.outputs.need_monitoring == 'true' || needs.plan.outputs.need_deploy == 'true'
         shell: bash
         run: |
           set -e
+          export KUBECONFIG="$INFRA_DIR/kubeconfig"
+
+          if ! command -v helm >/dev/null 2>&1; then
+            echo "Helm is not installed on the self-hosted runner."
+            exit 1
+          fi
+
+          kubectl create namespace observability --dry-run=client -o yaml | kubectl apply -f -
+
+          helm repo add grafana https://grafana.github.io/helm-charts || true
+          helm repo update
+
+          helm upgrade --install loki grafana/loki \
+            -n observability \
+            -f "$INFRA_DIR/observability/loki-values.yaml" \
+            --wait \
+            --timeout 10m
+
+          helm upgrade --install alloy grafana/alloy \
+            -n observability \
+            -f "$INFRA_DIR/observability/alloy-values.yaml" \
+            --wait \
+            --timeout 10m
+
+          helm upgrade --install grafana grafana/grafana \
+            -n observability \
+            -f "$INFRA_DIR/observability/grafana-values.yaml" \
+            --wait \
+            --timeout 10m
+
+          kubectl get pods -n observability -o wide
+          kubectl get svc -n observability -o wide
+
+      - name: Restart Dashboard Application
+        if: needs.plan.outputs.need_webui == 'true'
+        shell: bash
+        run: |
+          set -e
+
+          if [ ! -d "$WEBUI_DIR/backend" ] || [ ! -d "$WEBUI_DIR/frontend" ]; then
+            echo "WEBUI_DIR is invalid: $WEBUI_DIR"
+            echo "Expected backend/ and frontend/ inside WEBUI_DIR."
+            exit 1
+          fi
+
           pkill -f "uvicorn server:app" || true
           pkill -f "vite" || true
           sleep 2
@@ -371,19 +427,34 @@ jobs:
           nohup uvicorn server:app --host 0.0.0.0 --port 8000 > /tmp/webui-backend.log 2>&1 &
 
           cd "$WEBUI_DIR/frontend"
-          nohup npm run dev > /tmp/webui-frontend.log 2>&1 &
+          nohup npm run dev -- --host 0.0.0.0 > /tmp/webui-frontend.log 2>&1 &
 
-      - name: Verify Current Pods State
+          sleep 3
+          pgrep -af "uvicorn server:app" || (cat /tmp/webui-backend.log && exit 1)
+          pgrep -af "vite" || (cat /tmp/webui-frontend.log && exit 1)
+
+      - name: Verify Current State
         shell: bash
         run: |
           set -e
           export KUBECONFIG="$INFRA_DIR/kubeconfig"
 
+          echo "=== Plan ==="
+          echo "need_infra=${{ needs.plan.outputs.need_infra }}"
+          echo "need_build=${{ needs.plan.outputs.need_build }}"
+          echo "need_deploy=${{ needs.plan.outputs.need_deploy }}"
+          echo "need_monitoring=${{ needs.plan.outputs.need_monitoring }}"
+          echo "need_webui=${{ needs.plan.outputs.need_webui }}"
+          echo "image=${{ needs.plan.outputs.image_owner }}:${{ needs.plan.outputs.image_tag }}"
+
           echo "=== Nodes ==="
           kubectl get nodes -o wide
 
           echo "=== 5G Pods ==="
-          kubectl get pods -n etri6g -o wide
+          kubectl get pods -n etri6g -o wide || true
 
-          echo "=== Failed/Pending Pod Details ==="
+          echo "=== Observability Pods ==="
+          kubectl get pods -n observability -o wide || true
+
+          echo "=== Failed/Pending 5G Pod Details ==="
           kubectl get pods -n etri6g --field-selector=status.phase!=Running -o wide || true
