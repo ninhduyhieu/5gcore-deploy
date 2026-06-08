@@ -184,52 +184,34 @@ jobs:
             vagrant ssh "$vm" -c "echo SSH_OK_$vm"
           done
 
-      - name: Generate Ansible inventory from Vagrant SSH config
+      - name: Generate Ansible inventory using Vagrant aliases
         shell: bash
         run: |
           set -e
           cd "$INFRA_DIR"
 
-          get_cfg() {
-            local vm="$1"
-            local key="$2"
-            vagrant ssh-config "$vm" | awk -v k="$key" '$1 == k {print $2; exit}'
-          }
-
           rm -f .ansible-vagrant-inventory.yaml
-
           {
             echo "all:"
             echo "  hosts:"
-          } >> .ansible-vagrant-inventory.yaml
-
-          for vm in k3s-server-1 k3s-agent-1 k3s-agent-2; do
-            HOST=$(get_cfg "$vm" HostName)
-            PORT=$(get_cfg "$vm" Port)
-            USER=$(get_cfg "$vm" User)
-            KEY=$(get_cfg "$vm" IdentityFile | tr -d '"')
-
-            if [ "$vm" = "k3s-server-1" ]; then
-              NODE_IP="192.168.58.11"
-            elif [ "$vm" = "k3s-agent-1" ]; then
-              NODE_IP="192.168.58.12"
-            else
-              NODE_IP="192.168.58.13"
-            fi
-
-            {
-              echo "    $vm:"
-              echo "      ansible_host: $HOST"
-              echo "      ansible_port: $PORT"
-              echo "      ansible_user: $USER"
-              echo "      ansible_ssh_private_key_file: $KEY"
-              echo "      ansible_ssh_common_args: '-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null'"
-              echo "      ansible_python_interpreter: /usr/bin/python3"
-              echo "      node_ip: $NODE_IP"
-            } >> .ansible-vagrant-inventory.yaml
-          done
-
-          {
+            echo "    k3s-server-1:"
+            echo "      ansible_host: k3s-server-1"
+            echo "      ansible_user: vagrant"
+            echo "      ansible_python_interpreter: /usr/bin/python3"
+            echo "      ansible_ssh_common_args: '-F $INFRA_DIR/.vagrant-ssh-config -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null'"
+            echo "      node_ip: 192.168.58.11"
+            echo "    k3s-agent-1:"
+            echo "      ansible_host: k3s-agent-1"
+            echo "      ansible_user: vagrant"
+            echo "      ansible_python_interpreter: /usr/bin/python3"
+            echo "      ansible_ssh_common_args: '-F $INFRA_DIR/.vagrant-ssh-config -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null'"
+            echo "      node_ip: 192.168.58.12"
+            echo "    k3s-agent-2:"
+            echo "      ansible_host: k3s-agent-2"
+            echo "      ansible_user: vagrant"
+            echo "      ansible_python_interpreter: /usr/bin/python3"
+            echo "      ansible_ssh_common_args: '-F $INFRA_DIR/.vagrant-ssh-config -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null'"
+            echo "      node_ip: 192.168.58.13"
             echo "  children:"
             echo "    masters:"
             echo "      hosts:"
@@ -238,10 +220,15 @@ jobs:
             echo "      hosts:"
             echo "        k3s-agent-1:"
             echo "        k3s-agent-2:"
-          } >> .ansible-vagrant-inventory.yaml
+          } > .ansible-vagrant-inventory.yaml
 
           echo "=== Generated Ansible inventory ==="
           cat .ansible-vagrant-inventory.yaml
+
+          echo "=== Test raw SSH with Vagrant config ==="
+          ssh -F "$INFRA_DIR/.vagrant-ssh-config" k3s-server-1 "hostname"
+          ssh -F "$INFRA_DIR/.vagrant-ssh-config" k3s-agent-1 "hostname"
+          ssh -F "$INFRA_DIR/.vagrant-ssh-config" k3s-agent-2 "hostname"
       - name: Release APT locks on VMs
         if: needs.detect-changes.outputs.need_infra == 'true'
         shell: bash
@@ -263,8 +250,7 @@ jobs:
           set -e
           cd "$INFRA_DIR"
 
-          ANSIBLE_HOST_KEY_CHECKING=False \
-          ansible-playbook -i .ansible-vagrant-inventory.yaml playbook.yml
+          ANSIBLE_HOST_KEY_CHECKING=False           ansible-playbook -i .ansible-vagrant-inventory.yaml playbook.yml -vv
 
       - name: Cluster Health Check with Auto-Heal
         shell: bash
