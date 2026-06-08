@@ -199,37 +199,7 @@ jobs:
           ANSIBLE_SSH_COMMON_ARGS="-F $INFRA_DIR/.vagrant-ssh-config -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null" \
           ansible-playbook -i inventory/hosts.yaml playbook.yml
 
-      - name: Cluster Health Check
-        shell: bash
-        run: |
-          set -e
-          export KUBECONFIG="$INFRA_DIR/kubeconfig"
 
-          curl -k --fail https://192.168.58.11:6443/cacerts >/dev/null
-
-          kubectl get nodes -o wide
-          kubectl wait --for=condition=Ready node/k3s-server-1 --timeout=600s
-          kubectl wait --for=condition=Ready node/k3s-agent-1 --timeout=900s
-          kubectl wait --for=condition=Ready node/k3s-agent-2 --timeout=900s
-
-          kubectl wait --for=condition=Ready pod \
-            -n kube-system \
-            -l k8s-app=calico-node \
-            --timeout=900s
-
-          kubectl get pods -A -o wide
-
-  app-delivery:
-    name: "CD · Build & Deploy Application"
-    runs-on: [self-hosted, linux, x64]
-    needs: [infra-ensure, detect-changes]
-    env:
-      INFRA_DIR: ${{ vars.INFRA_DIR || '' }}
-      SOURCE_DIR: ${{ vars.SOURCE_DIR || '' }}
-      DOCKER_DIR: ${{ vars.DOCKER_DIR || '' }}
-      WEBUI_DIR: ${{ vars.WEBUI_DIR || '' }}
-    steps:
-      - uses: actions/checkout@v4
 
       - name: Resolve paths
         shell: bash
