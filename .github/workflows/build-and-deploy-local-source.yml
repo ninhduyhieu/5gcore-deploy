@@ -68,7 +68,6 @@ jobs:
           fi
 
           CHANGED=$(git diff --name-only HEAD~1 HEAD 2>/dev/null || true)
-          echo "$CHANGED"
 
           NEED_INFRA=false
           NEED_BUILD=false
@@ -125,6 +124,8 @@ jobs:
         id: vars
         shell: bash
         run: |
+          set -e
+
           if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
             OWNER="${{ inputs.image_owner }}"
             if [ "${{ inputs.image_tag }}" = "latest" ]; then
@@ -137,6 +138,17 @@ jobs:
             TAG="sha-$(echo ${{ github.sha }} | cut -c1-7)"
           fi
 
+          if [ -z "$OWNER" ]; then
+            OWNER="ninhduyhieu"
+          fi
+
+          if [ -z "$TAG" ]; then
+            TAG="latest"
+          fi
+
+          echo "OWNER=$OWNER"
+          echo "TAG=$TAG"
+
           echo "owner=$OWNER" >> "$GITHUB_OUTPUT"
           echo "tag=$TAG" >> "$GITHUB_OUTPUT"
 
@@ -146,6 +158,7 @@ jobs:
           set -e
           cd "$INFRA_DIR"
 
+          echo "=== Vagrant status before boot ==="
           vagrant status || true
 
           for vm in k3s-server-1 k3s-agent-1 k3s-agent-2; do
@@ -174,6 +187,45 @@ jobs:
             vagrant ssh "$vm" -c "echo SSH_OK_$vm"
           done
 
+      - name: Generate Ansible inventory using Vagrant SSH aliases
+        shell: bash
+        run: |
+          set -e
+          cd "$INFRA_DIR"
+
+          cat > .ansible-vagrant-inventory.yaml <<'EOF'
+          all:
+            hosts:
+              k3s-server-1:
+                ansible_host: k3s-server-1
+                ansible_user: vagrant
+                ansible_python_interpreter: /usr/bin/python3
+                node_ip: 192.168.58.11
+              k3s-agent-1:
+                ansible_host: k3s-agent-1
+                ansible_user: vagrant
+                ansible_python_interpreter: /usr/bin/python3
+                node_ip: 192.168.58.12
+              k3s-agent-2:
+                ansible_host: k3s-agent-2
+                ansible_user: vagrant
+                ansible_python_interpreter: /usr/bin/python3
+                node_ip: 192.168.58.13
+            children:
+              masters:
+                hosts:
+                  k3s-server-1:
+              workers:
+                hosts:
+                  k3s-agent-1:
+                  k3s-agent-2:
+          EOF
+
+          sed -i 's/^          //' .ansible-vagrant-inventory.yaml
+
+          echo "=== Generated Ansible inventory ==="
+          cat .ansible-vagrant-inventory.yaml
+
       - name: Release APT locks on VMs
         if: needs.detect-changes.outputs.need_infra == 'true'
         shell: bash
@@ -197,9 +249,69 @@ jobs:
 
           ANSIBLE_HOST_KEY_CHECKING=False \
           ANSIBLE_SSH_COMMON_ARGS="-F $INFRA_DIR/.vagrant-ssh-config -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null" \
-          ansible-playbook -i inventory/hosts.yaml playbook.yml
+          ansible-playbook -i .ansible-vagrant-inventory.yaml playbook.yml
 
+      - name: Cluster Health Check with Auto-Heal
+        shell: bash
+        run: |
+          set -e
+          export KUBECONFIG="$INFRA_DIR/kubeconfig"
+          cd "$INFRA_DIR"
 
+          echo "Checking K3s API /cacerts..."
+          curl -k --fail https://192.168.58.11:6443/cacerts >/dev/null
+
+          echo "Initial node state..."
+          kubectl get nodes -o wide || true
+
+          echo "Auto-heal Vagrant workers if NotReady..."
+
+          if ! kubectl get node k3s-agent-1 -o jsonpath='{.status.conditions[?(@.type=="Ready")].status}' 2>/dev/null | grep -q True; then
+            echo "k3s-agent-1 is NotReady -> restart VM and k3s-agent"
+            vagrant halt -f k3s-agent-1 || true
+            timeout 10m vagrant up k3s-agent-1 --no-provision
+            vagrant ssh k3s-agent-1 -c "sudo systemctl restart k3s-agent || sudo systemctl restart k3s || true"
+          fi
+
+          if ! kubectl get node k3s-agent-2 -o jsonpath='{.status.conditions[?(@.type=="Ready")].status}' 2>/dev/null | grep -q True; then
+            echo "k3s-agent-2 is NotReady -> restart VM and k3s-agent"
+            vagrant halt -f k3s-agent-2 || true
+            timeout 10m vagrant up k3s-agent-2 --no-provision
+            vagrant ssh k3s-agent-2 -c "sudo systemctl restart k3s-agent || sudo systemctl restart k3s || true"
+          fi
+
+          echo "Give kubelet/k3s-agent/Calico time to settle..."
+          sleep 120
+
+          echo "Final node state before wait..."
+          kubectl get nodes -o wide || true
+          kubectl get pods -n kube-system -o wide || true
+
+          echo "Wait for all nodes..."
+          kubectl wait --for=condition=Ready node/k3s-server-1 --timeout=600s
+          kubectl wait --for=condition=Ready node/k3s-agent-1 --timeout=900s
+          kubectl wait --for=condition=Ready node/k3s-agent-2 --timeout=900s
+
+          echo "Wait for Calico..."
+          kubectl wait --for=condition=Ready pod \
+            -n kube-system \
+            -l k8s-app=calico-node \
+            --timeout=900s
+
+          kubectl get nodes -o wide
+          kubectl get pods -A -o wide
+
+  app-delivery:
+    name: "CD · Build & Deploy Application"
+    runs-on: [self-hosted, linux, x64]
+    needs: [infra-ensure, detect-changes]
+    env:
+      INFRA_DIR: ${{ vars.INFRA_DIR || '' }}
+      SOURCE_DIR: ${{ vars.SOURCE_DIR || '' }}
+      DOCKER_DIR: ${{ vars.DOCKER_DIR || '' }}
+      WEBUI_DIR: ${{ vars.WEBUI_DIR || '' }}
+    steps:
+      - uses: actions/checkout@v4
 
       - name: Resolve paths
         shell: bash
@@ -209,15 +321,34 @@ jobs:
           echo "DOCKER_DIR=${DOCKER_DIR:-$HOME/Downloads/etrib5gc/docker}" >> "$GITHUB_ENV"
           echo "WEBUI_DIR=${WEBUI_DIR:-$HOME/Downloads/5gc-webui}" >> "$GITHUB_ENV"
 
-      - name: Sync manifest and scripts
+      - name: Sync manifest, scripts and observability configs
         shell: bash
         run: |
           set -e
+          mkdir -p "$INFRA_DIR"
           rsync -a --delete \
             --exclude '.git/' \
             --exclude '.vagrant/' \
+            --exclude '.venv/' \
             --exclude 'kubeconfig' \
             "$GITHUB_WORKSPACE"/ "$INFRA_DIR"/
+
+      - name: Debug resolved image variables
+        shell: bash
+        run: |
+          OWNER="${{ needs.infra-ensure.outputs.image_owner }}"
+          TAG="${{ needs.infra-ensure.outputs.image_tag }}"
+
+          if [ -z "$OWNER" ]; then
+            OWNER="ninhduyhieu"
+          fi
+
+          if [ -z "$TAG" ]; then
+            TAG="latest"
+          fi
+
+          echo "IMAGE_OWNER=$OWNER"
+          echo "IMAGE_TAG=$TAG"
 
       - name: Login to GHCR
         if: needs.detect-changes.outputs.need_build == 'true'
@@ -233,11 +364,23 @@ jobs:
         run: |
           set -e
           cd "$DOCKER_DIR"
-          chmod +x copybuild.sh
-          ./copybuild.sh
 
           OWNER="${{ needs.infra-ensure.outputs.image_owner }}"
           TAG="${{ needs.infra-ensure.outputs.image_tag }}"
+
+          if [ -z "$OWNER" ]; then
+            OWNER="ninhduyhieu"
+          fi
+
+          if [ -z "$TAG" ]; then
+            TAG="latest"
+          fi
+
+          echo "Building with OWNER=$OWNER TAG=$TAG"
+
+          chmod +x copybuild.sh
+          ./copybuild.sh
+
           BUILD_OPTS="--memory=2g --cpu-shares=512"
 
           docker build $BUILD_OPTS \
@@ -271,7 +414,7 @@ jobs:
             docker push "ghcr.io/${OWNER}/b5gc-${nf}:latest"
           done
 
-      - name: Pre-deploy Cluster Gate
+      - name: Pre-deploy Cluster Gate with Auto-Heal
         if: needs.detect-changes.outputs.need_deploy == 'true' || needs.detect-changes.outputs.need_monitoring == 'true'
         shell: bash
         run: |
@@ -279,9 +422,29 @@ jobs:
           export KUBECONFIG="$INFRA_DIR/kubeconfig"
           cd "$INFRA_DIR"
 
+          echo "Checking K3s API /cacerts..."
           curl -k --fail https://192.168.58.11:6443/cacerts >/dev/null
-          kubectl get nodes -o wide
 
+          echo "Initial node state..."
+          kubectl get nodes -o wide || true
+
+          if ! kubectl get node k3s-agent-1 -o jsonpath='{.status.conditions[?(@.type=="Ready")].status}' 2>/dev/null | grep -q True; then
+            echo "k3s-agent-1 is NotReady -> restart"
+            vagrant halt -f k3s-agent-1 || true
+            timeout 10m vagrant up k3s-agent-1 --no-provision
+            vagrant ssh k3s-agent-1 -c "sudo systemctl restart k3s-agent || sudo systemctl restart k3s || true"
+          fi
+
+          if ! kubectl get node k3s-agent-2 -o jsonpath='{.status.conditions[?(@.type=="Ready")].status}' 2>/dev/null | grep -q True; then
+            echo "k3s-agent-2 is NotReady -> restart"
+            vagrant halt -f k3s-agent-2 || true
+            timeout 10m vagrant up k3s-agent-2 --no-provision
+            vagrant ssh k3s-agent-2 -c "sudo systemctl restart k3s-agent || sudo systemctl restart k3s || true"
+          fi
+
+          sleep 120
+
+          kubectl get nodes -o wide
           kubectl wait --for=condition=Ready node/k3s-server-1 --timeout=600s
           kubectl wait --for=condition=Ready node/k3s-agent-1 --timeout=900s
           kubectl wait --for=condition=Ready node/k3s-agent-2 --timeout=900s
@@ -294,12 +457,20 @@ jobs:
           export KUBECONFIG="$INFRA_DIR/kubeconfig"
           cd "$INFRA_DIR"
 
+          OWNER="${{ needs.infra-ensure.outputs.image_owner }}"
+          TAG="${{ needs.infra-ensure.outputs.image_tag }}"
+
+          if [ -z "$OWNER" ]; then
+            OWNER="ninhduyhieu"
+          fi
+
+          if [ -z "$TAG" ]; then
+            TAG="latest"
+          fi
+
           kubectl create namespace etri6g --dry-run=client -o yaml | kubectl apply -f -
 
-          ./scripts/render-ghcr-images.sh \
-            "${{ needs.infra-ensure.outputs.image_owner }}" \
-            "${{ needs.infra-ensure.outputs.image_tag }}" \
-            rendered
+          ./scripts/render-ghcr-images.sh "$OWNER" "$TAG" rendered
 
           for f in ctrl gw nsm mongo deploy-other pran; do
             kubectl apply -f "rendered/${f}.yaml"
