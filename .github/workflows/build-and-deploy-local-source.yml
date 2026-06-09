@@ -120,6 +120,8 @@ jobs:
             --exclude '.vagrant/' \
             --exclude '.venv/' \
             --exclude 'kubeconfig' \
+            --exclude '.vagrant-ssh-config' \
+            --exclude '.ansible-vagrant-inventory.yaml' \
             "$GITHUB_WORKSPACE"/ "$INFRA_DIR"/
 
       - name: Generate image tag
@@ -149,7 +151,7 @@ jobs:
           echo "owner=$OWNER" >> "$GITHUB_OUTPUT"
           echo "tag=$TAG" >> "$GITHUB_OUTPUT"
 
-      - name: Ensure Vagrant VMs are running
+      - name: Ensure Vagrant VMs are running with stable ports
         shell: bash
         run: |
           set -e
@@ -167,6 +169,7 @@ jobs:
             fi
           done
 
+          # Do not destroy existing VMs. Reuse them so SSH ports and VM identity stay stable.
           timeout 20m vagrant up --no-parallel
 
           {
@@ -181,7 +184,7 @@ jobs:
           cat "$INFRA_DIR/.vagrant-ssh-config"
 
           for vm in k3s-server-1 k3s-agent-1 k3s-agent-2; do
-            vagrant ssh "$vm" -c "echo SSH_OK_$vm"
+            ssh -F "$INFRA_DIR/.vagrant-ssh-config" "$vm" "echo SSH_OK_$vm"
           done
 
       - name: Generate Ansible inventory using Vagrant aliases
@@ -225,10 +228,6 @@ jobs:
           echo "=== Generated Ansible inventory ==="
           cat .ansible-vagrant-inventory.yaml
 
-          echo "=== Test raw SSH with Vagrant config ==="
-          ssh -F "$INFRA_DIR/.vagrant-ssh-config" k3s-server-1 "hostname"
-          ssh -F "$INFRA_DIR/.vagrant-ssh-config" k3s-agent-1 "hostname"
-          ssh -F "$INFRA_DIR/.vagrant-ssh-config" k3s-agent-2 "hostname"
       - name: Release APT locks on VMs
         if: needs.detect-changes.outputs.need_infra == 'true'
         shell: bash
@@ -250,7 +249,8 @@ jobs:
           set -e
           cd "$INFRA_DIR"
 
-          ANSIBLE_HOST_KEY_CHECKING=False           ansible-playbook -i .ansible-vagrant-inventory.yaml playbook.yml -vv
+          ANSIBLE_HOST_KEY_CHECKING=False \
+          ansible-playbook -i .ansible-vagrant-inventory.yaml playbook.yml -vv
 
       - name: Cluster Health Check with Auto-Heal
         shell: bash
@@ -267,19 +267,14 @@ jobs:
 
           echo "Auto-heal Vagrant workers if NotReady..."
 
-          if ! kubectl get node k3s-agent-1 -o jsonpath='{.status.conditions[?(@.type=="Ready")].status}' 2>/dev/null | grep -q True; then
-            echo "k3s-agent-1 is NotReady -> restart VM and k3s-agent"
-            vagrant halt -f k3s-agent-1 || true
-            timeout 10m vagrant up k3s-agent-1 --no-provision
-            vagrant ssh k3s-agent-1 -c "sudo systemctl restart k3s-agent || sudo systemctl restart k3s || true"
-          fi
-
-          if ! kubectl get node k3s-agent-2 -o jsonpath='{.status.conditions[?(@.type=="Ready")].status}' 2>/dev/null | grep -q True; then
-            echo "k3s-agent-2 is NotReady -> restart VM and k3s-agent"
-            vagrant halt -f k3s-agent-2 || true
-            timeout 10m vagrant up k3s-agent-2 --no-provision
-            vagrant ssh k3s-agent-2 -c "sudo systemctl restart k3s-agent || sudo systemctl restart k3s || true"
-          fi
+          for vm in k3s-agent-1 k3s-agent-2; do
+            if ! kubectl get node "$vm" -o jsonpath='{.status.conditions[?(@.type=="Ready")].status}' 2>/dev/null | grep -q True; then
+              echo "$vm is NotReady -> restart VM and k3s-agent"
+              vagrant halt -f "$vm" || true
+              timeout 10m vagrant up "$vm" --no-provision
+              vagrant ssh "$vm" -c "sudo systemctl restart k3s-agent || sudo systemctl restart k3s || true"
+            fi
+          done
 
           echo "Give kubelet/k3s-agent/Calico time to settle..."
           sleep 120
@@ -302,10 +297,57 @@ jobs:
           kubectl get nodes -o wide
           kubectl get pods -A -o wide
 
+  pre-deploy-test:
+    name: "CI · Pre-Deploy Test"
+    runs-on: [self-hosted, linux, x64]
+    needs: [infra-ensure, detect-changes]
+    env:
+      INFRA_DIR: ${{ vars.INFRA_DIR || '' }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Resolve paths
+        shell: bash
+        run: |
+          echo "INFRA_DIR=${INFRA_DIR:-$HOME/5gcore-deploy}" >> "$GITHUB_ENV"
+
+      - name: Run simple smoke tests before deploy
+        shell: bash
+        run: |
+          set -e
+          export KUBECONFIG="$INFRA_DIR/kubeconfig"
+          cd "$INFRA_DIR"
+
+          echo "=== Cluster connectivity ==="
+          kubectl get nodes -o wide
+          kubectl get pods -n kube-system -o wide
+
+          echo "=== Check manifests exist ==="
+          test -f k8s/ctrl.yaml
+          test -f k8s/gw.yaml
+          test -f k8s/nsm.yaml
+          test -f k8s/mongo.yaml
+          test -f k8s/deploy-other.yaml
+          test -f k8s/pran.yaml
+          test -x scripts/render-ghcr-images.sh
+
+          echo "=== Dry-run render/apply manifests when deploy is needed ==="
+          if [ "${{ needs.detect-changes.outputs.need_deploy }}" = "true" ]; then
+            OWNER="${{ needs.infra-ensure.outputs.image_owner }}"
+            TAG="${{ needs.infra-ensure.outputs.image_tag }}"
+            [ -z "$OWNER" ] && OWNER="ninhduyhieu"
+            [ -z "$TAG" ] && TAG="latest"
+
+            ./scripts/render-ghcr-images.sh "$OWNER" "$TAG" rendered-test
+            for f in ctrl gw nsm mongo deploy-other pran; do
+              kubectl apply --dry-run=server -f "rendered-test/${f}.yaml"
+            done
+          fi
+
   app-delivery:
     name: "CD · Build & Deploy Application"
     runs-on: [self-hosted, linux, x64]
-    needs: [infra-ensure, detect-changes]
+    needs: [infra-ensure, detect-changes, pre-deploy-test]
     env:
       INFRA_DIR: ${{ vars.INFRA_DIR || '' }}
       SOURCE_DIR: ${{ vars.SOURCE_DIR || '' }}
@@ -332,19 +374,9 @@ jobs:
             --exclude '.vagrant/' \
             --exclude '.venv/' \
             --exclude 'kubeconfig' \
+            --exclude '.vagrant-ssh-config' \
+            --exclude '.ansible-vagrant-inventory.yaml' \
             "$GITHUB_WORKSPACE"/ "$INFRA_DIR"/
-
-      - name: Debug resolved image variables
-        shell: bash
-        run: |
-          OWNER="${{ needs.infra-ensure.outputs.image_owner }}"
-          TAG="${{ needs.infra-ensure.outputs.image_tag }}"
-
-          [ -z "$OWNER" ] && OWNER="ninhduyhieu"
-          [ -z "$TAG" ] && TAG="latest"
-
-          echo "IMAGE_OWNER=$OWNER"
-          echo "IMAGE_TAG=$TAG"
 
       - name: Login to GHCR
         if: needs.detect-changes.outputs.need_build == 'true'
@@ -419,19 +451,14 @@ jobs:
           echo "Initial node state..."
           kubectl get nodes -o wide || true
 
-          if ! kubectl get node k3s-agent-1 -o jsonpath='{.status.conditions[?(@.type=="Ready")].status}' 2>/dev/null | grep -q True; then
-            echo "k3s-agent-1 is NotReady -> restart"
-            vagrant halt -f k3s-agent-1 || true
-            timeout 10m vagrant up k3s-agent-1 --no-provision
-            vagrant ssh k3s-agent-1 -c "sudo systemctl restart k3s-agent || sudo systemctl restart k3s || true"
-          fi
-
-          if ! kubectl get node k3s-agent-2 -o jsonpath='{.status.conditions[?(@.type=="Ready")].status}' 2>/dev/null | grep -q True; then
-            echo "k3s-agent-2 is NotReady -> restart"
-            vagrant halt -f k3s-agent-2 || true
-            timeout 10m vagrant up k3s-agent-2 --no-provision
-            vagrant ssh k3s-agent-2 -c "sudo systemctl restart k3s-agent || sudo systemctl restart k3s || true"
-          fi
+          for vm in k3s-agent-1 k3s-agent-2; do
+            if ! kubectl get node "$vm" -o jsonpath='{.status.conditions[?(@.type=="Ready")].status}' 2>/dev/null | grep -q True; then
+              echo "$vm is NotReady -> restart"
+              vagrant halt -f "$vm" || true
+              timeout 10m vagrant up "$vm" --no-provision
+              vagrant ssh "$vm" -c "sudo systemctl restart k3s-agent || sudo systemctl restart k3s || true"
+            fi
+          done
 
           sleep 120
 
@@ -458,28 +485,42 @@ jobs:
 
           ./scripts/render-ghcr-images.sh "$OWNER" "$TAG" rendered
 
-          for f in ctrl gw nsm mongo deploy-other pran; do
-            kubectl apply -f "rendered/${f}.yaml"
-          done
+          kubectl apply -f rendered/ctrl.yaml
+          kubectl apply -f rendered/gw.yaml
+          kubectl apply -f rendered/nsm.yaml
+          kubectl apply -f rendered/mongo.yaml
+          kubectl apply -f rendered/deploy-other.yaml
+          kubectl apply -f rendered/pran.yaml
 
-      - name: Wait for 5GC Deployments
+      - name: Wait for 5GC Deployments with rollback
         if: needs.detect-changes.outputs.need_deploy == 'true'
         shell: bash
         run: |
           set -e
           export KUBECONFIG="$INFRA_DIR/kubeconfig"
 
-          for dep in \
-            ctrl-dep gateway-dep nsm-dep udr-mongo \
-            ausf-dep udm-dep pcf-dep damf-dep \
-            amf-10-100-agent1-dep amf-10-100-agent2-dep \
-            smf-slice1-dep smf-slice2-dep pran-dep
-          do
-            kubectl rollout status "deployment/${dep}" -n etri6g --timeout=300s
+          DEPLOYMENTS="ctrl-dep gateway-dep nsm-dep udr-mongo ausf-dep udm-dep pcf-dep damf-dep amf-10-100-agent1-dep amf-10-100-agent2-dep smf-slice1-dep smf-slice2-dep pran-dep"
+
+          failed=""
+          for dep in $DEPLOYMENTS; do
+            echo "Checking rollout: $dep"
+            if ! kubectl rollout status "deployment/${dep}" -n etri6g --timeout=300s; then
+              echo "Rollout failed: $dep"
+              failed="$failed $dep"
+            fi
           done
 
+          if [ -n "$failed" ]; then
+            echo "Rollback deployments:$failed"
+            for dep in $failed; do
+              kubectl rollout undo "deployment/${dep}" -n etri6g || true
+            done
+            kubectl get pods -n etri6g -o wide || true
+            exit 1
+          fi
+
       - name: Deploy Monitoring Stack Loki Alloy Grafana
-        if: needs.detect-changes.outputs.need_monitoring == 'true' || needs.detect-changes.outputs.need_deploy == 'true'
+        if: needs.detect-changes.outputs.need_monitoring == 'true'
         shell: bash
         run: |
           set -e
@@ -524,7 +565,7 @@ jobs:
           nohup uvicorn server:app --host 0.0.0.0 --port 8000 > /tmp/webui-backend.log 2>&1 &
 
           cd "$WEBUI_DIR/frontend"
-          nohup npm run dev > /tmp/webui-frontend.log 2>&1 &
+          nohup npm run dev -- --host 0.0.0.0 > /tmp/webui-frontend.log 2>&1 &
 
       - name: Verify Current State
         shell: bash

@@ -4,6 +4,7 @@ etrib5gc/
 .vagrant/
 .envrc
 kubeconfig
+kubeconfig.bak
 rendered/
 .vagrant-ssh-config
 .ansible-vagrant-inventory.yaml
