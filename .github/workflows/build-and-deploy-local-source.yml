@@ -322,9 +322,6 @@ jobs:
           kubectl get nodes -o wide
           kubectl get pods -n kube-system -o wide
 
-          # Ensure namespace exists for server-side validation
-          kubectl create namespace etri6g --dry-run=client -o yaml | kubectl apply -f -
-
           echo "=== Check manifests exist ==="
           test -f k8s/ctrl.yaml
           test -f k8s/gw.yaml
@@ -342,7 +339,13 @@ jobs:
             [ -z "$TAG" ] && TAG="latest"
 
             ./scripts/render-ghcr-images.sh "$OWNER" "$TAG" rendered-test
+
+            echo "=== Ensure namespace exists for server-side validation ==="
+            kubectl create namespace etri6g \
+              --dry-run=client -o yaml | kubectl apply -f -
+
             for f in ctrl gw nsm mongo deploy-other pran; do
+              echo "Validating rendered-test/${f}.yaml"
               kubectl apply --dry-run=server -f "rendered-test/${f}.yaml"
             done
           fi
