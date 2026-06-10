@@ -172,6 +172,19 @@ jobs:
             fi
           done
 
+          # Trước khi up: kill bất kỳ VBoxHeadless nào còn giữ port SSH.
+          # Xảy ra khi job bị cancel hoặc host tắt đột ngột giữa chừng.
+          for port in 2200 2201 2202; do
+            pid=$(sudo ss -tlnp 2>/dev/null               | awk -v p=":${port} " '$0 ~ p {match($0,/pid=([0-9]+)/,a); if(a[1]) print a[1]}')
+            if [ -n "$pid" ]; then
+              echo "Port $port held by PID $pid — killing..."
+              sudo kill -9 "$pid" 2>/dev/null || true
+            fi
+          done
+
+          # Đợi OS release port
+          sleep 3
+
           # Không destroy VM — reuse để SSH port giữ nguyên 2200/2201/2202.
           timeout 20m vagrant up --no-parallel
 
