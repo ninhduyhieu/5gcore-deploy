@@ -1,0 +1,466 @@
+# === AUSF ===
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ausf-dep
+  namespace: etri6g
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: ausf
+  template:
+    metadata:
+      labels:
+        app: ausf
+        plmnId: 208-93
+    spec:
+      nodeSelector:
+        kubernetes.io/hostname: k3s-agent-1
+      volumes:
+        - name: ausf-config
+          configMap:
+            name: ausf-config
+      containers:
+        - name: ausf
+          image: ghcr.io/ninhduyhieu/b5gc-ausf:manual-20260610-021729
+          imagePullPolicy: Always
+          command: ["./ausf"]
+          args: ["-c", "/etc/config/ausf.json"]
+          volumeMounts:
+            - mountPath: /etc/config
+              name: ausf-config
+          ports:
+            - containerPort: 9001
+            - containerPort: 7001
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: ausf-config
+  namespace: etri6g
+data:
+  ausf.json: |
+    {
+      "plmnId": {
+        "mcc": "001",
+        "mnc": "01"
+      },
+      "mesh": {
+        "registrar": "gateway-svc:7777",
+        "labels": {
+          "plmnId":"001-01",
+          "app": "ausf"
+        }
+      }
+    }
+---
+# === UDM ===
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: udm-dep
+  namespace: etri6g
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: udm
+  template:
+    metadata:
+      labels:
+        app: udm
+        plmnId: 208-93
+    spec:
+      nodeSelector:
+        kubernetes.io/hostname: k3s-agent-1
+      volumes:
+        - name: udm-config
+          configMap:
+            name: udm-config
+      containers:
+        - name: udm
+          image: ghcr.io/ninhduyhieu/b5gc-udm:manual-20260610-021729
+          imagePullPolicy: Always
+          command: ["./udm"]
+          args: ["-c", "/etc/config/udm.json"]
+          volumeMounts:
+            - mountPath: /etc/config
+              name: udm-config
+          ports:
+            - containerPort: 9001
+            - containerPort: 7001
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: udm-config
+  namespace: etri6g
+data:
+  udm.json: |
+    {
+      "plmnId": {
+        "mcc": "001",
+        "mnc": "01"
+      },
+      "mesh": {
+        "registrar": "gateway-svc:7777",
+        "labels": {
+          "plmnId":"001-01",
+          "app": "udm"
+        }
+      }
+    }
+---
+# === PCF ===
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: pcf-dep
+  namespace: etri6g
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: pcf
+  template:
+    metadata:
+      labels:
+        app: pcf
+        plmnId: 208-93
+    spec:
+      nodeSelector:
+        kubernetes.io/hostname: k3s-agent-1
+      volumes:
+        - name: pcf-config
+          configMap:
+            name: pcf-config
+      containers:
+        - name: pcf
+          image: ghcr.io/ninhduyhieu/b5gc-pcf:manual-20260610-021729
+          imagePullPolicy: Always
+          command: ["./pcf"]
+          args: ["-c", "/etc/config/pcf.json"]
+          volumeMounts:
+            - mountPath: /etc/config
+              name: pcf-config
+          ports:
+            - containerPort: 9001
+            - containerPort: 7001
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: pcf-config
+  namespace: etri6g
+data:
+  pcf.json: |
+    {
+      "plmnId": {
+        "mcc": "001",
+        "mnc": "01"
+      },
+      "mesh": {
+        "registrar": "gateway-svc:7777",
+        "labels": {
+          "plmnId":"001-01",
+          "app": "pcf"
+        }
+      }
+    }
+---
+# === DAMF ===
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: damf-dep
+  namespace: etri6g
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: damf
+  template:
+    metadata:
+      labels:
+        app: damf
+        plmnId: 208-93
+    spec:
+      nodeSelector:
+        kubernetes.io/hostname: k3s-agent-1
+      volumes:
+        - name: damf-config
+          configMap:
+            name: damf-config
+      containers:
+        - name: damf
+          image: ghcr.io/ninhduyhieu/b5gc-damf:manual-20260610-021729
+          imagePullPolicy: Always
+          command: ["./damf"]
+          args: ["-c", "/etc/config/damf.json"]
+          volumeMounts:
+            - mountPath: /etc/config
+              name: damf-config
+          ports:
+            - containerPort: 9001
+            - containerPort: 7001
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: damf-config
+  namespace: etri6g
+data:
+  damf.json: |
+    {
+      "plmnId": {
+        "mcc": "001",
+        "mnc": "01"
+      },
+      "logLevel":"info",
+      "t3502": 200,
+      "t3550": 500,
+      "mesh": {
+        "registrar": "gateway-svc:7777",
+        "labels": {
+          "plmnId":"001-01",
+          "app": "damf",
+          "region":"daejeon"
+        }
+      }
+    }
+---
+# === AMF (10-100 set) - k3s-agent-1 ===
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: amf-10-100-agent1-dep
+  namespace: etri6g
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: amf
+      amfSet: 10-100
+      node: agent1
+  template:
+    metadata:
+      labels:
+        app: amf
+        amfSet: 10-100
+        plmnId: 208-93
+        node: agent1
+    spec:
+      nodeSelector:
+        kubernetes.io/hostname: k3s-agent-1
+      volumes:
+        - name: amf-config
+          configMap:
+            name: amf-10-100-config
+      containers:
+        - name: amf
+          image: ghcr.io/ninhduyhieu/b5gc-amf:manual-20260610-021729
+          imagePullPolicy: Always
+          command: ["./amf"]
+          args: ["-c", "/etc/config/amf.json"]
+          volumeMounts:
+            - mountPath: /etc/config
+              name: amf-config
+          ports:
+            - containerPort: 9001
+            - containerPort: 7001
+---
+# === AMF (10-100 set) - k3s-agent-2 ===
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: amf-10-100-agent2-dep
+  namespace: etri6g
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: amf
+      amfSet: 10-100
+      node: agent2
+  template:
+    metadata:
+      labels:
+        app: amf
+        amfSet: 10-100
+        plmnId: 208-93
+        node: agent2
+    spec:
+      nodeSelector:
+        kubernetes.io/hostname: k3s-agent-2
+      volumes:
+        - name: amf-config
+          configMap:
+            name: amf-10-100-config
+      containers:
+        - name: amf
+          image: ghcr.io/ninhduyhieu/b5gc-amf:manual-20260610-021729
+          imagePullPolicy: Always
+          command: ["./amf"]
+          args: ["-c", "/etc/config/amf.json"]
+          volumeMounts:
+            - mountPath: /etc/config
+              name: amf-config
+          ports:
+            - containerPort: 9001
+            - containerPort: 7001
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: amf-10-100-config
+  namespace: etri6g
+data:
+  amf.json: |
+    {
+      "plmnId": {
+        "mcc": "001",
+        "mnc": "01"
+      },
+      "amfSet": "10-100",
+      "mesh": {
+        "registrar": "gateway-svc:7777",
+        "labels": {
+          "plmnId":"001-01",
+          "app": "amf",
+          "amfset":"10-100"
+        }
+      }
+    }
+---
+# === SMF Slice 1 ===
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: smf-slice1-dep
+  namespace: etri6g
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: smf
+      slice: 1-010203
+  template:
+    metadata:
+      labels:
+        app: smf
+        plmnId: 208-93
+        slice: 1-010203
+    spec:
+      nodeSelector:
+        kubernetes.io/hostname: k3s-agent-1
+      volumes:
+        - name: smf-config
+          configMap:
+            name: smf-slice1-config
+      containers:
+        - name: smf
+          image: ghcr.io/ninhduyhieu/b5gc-smf:manual-20260610-021729
+          imagePullPolicy: Always
+          command: ["./smf"]
+          args: ["-c", "/etc/config/smf.json"]
+          volumeMounts:
+            - mountPath: /etc/config
+              name: smf-config
+          ports:
+            - containerPort: 9001
+            - containerPort: 7001
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: smf-slice1-config
+  namespace: etri6g
+data:
+  smf.json: |
+    {
+      "plmnId": {
+        "mcc": "001",
+        "mnc": "01"
+      },
+      "slice": {
+        "sst" : 1,
+        "sd": "010203"
+      },
+      "transportNetworks": ["tran1"],
+      "mesh": {
+        "registrar": "gateway-svc:7777",
+        "labels": {
+          "plmnId":"001-01",
+          "app": "smf",
+          "slice": "1-010203",
+          "version": "v1"
+        }
+      }
+    }
+---
+# === SMF Slice 2 ===
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: smf-slice2-dep
+  namespace: etri6g
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: smf
+      slice: 1-543210
+  template:
+    metadata:
+      labels:
+        app: smf
+        plmnId: 208-93
+        slice: 1-543210
+    spec:
+      nodeSelector:
+        kubernetes.io/hostname: k3s-agent-2
+      volumes:
+        - name: smf-config
+          configMap:
+            name: smf-slice2-config
+      containers:
+        - name: smf
+          image: ghcr.io/ninhduyhieu/b5gc-smf:manual-20260610-021729
+          imagePullPolicy: Always
+          command: ["./smf"]
+          args: ["-c", "/etc/config/smf.json"]
+          volumeMounts:
+            - mountPath: /etc/config
+              name: smf-config
+          ports:
+            - containerPort: 9001
+            - containerPort: 7001
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: smf-slice2-config
+  namespace: etri6g
+data:
+  smf.json: |
+    {
+      "plmnId": {
+        "mcc": "001",
+        "mnc": "01"
+      },
+      "slice": {
+        "sst": 1,
+        "sd": "543210"
+      },
+      "transportNetworks": ["tran1"],
+      "mesh": {
+        "registrar": "gateway-svc:7777",
+        "labels": {
+          "plmnId": "001-01",
+          "app": "smf",
+          "slice": "1-543210",
+          "version": "v1"
+        }
+      }
+    }

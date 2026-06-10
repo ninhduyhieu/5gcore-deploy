@@ -1,0 +1,36 @@
+# === UDR (MongoDB) - No persistence ===
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: udr-mongo
+  namespace: etri6g
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: udr
+  template:
+    metadata:
+      labels:
+        app: udr
+    spec:
+      containers:
+        - name: mongo-db
+          image: mongo:latest
+          imagePullPolicy: Always
+          ports:
+            - containerPort: 27017
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: udr-mongo
+  namespace: etri6g
+spec:
+  selector:
+    app: udr
+  ports:
+    - name: mongodb
+      protocol: TCP
+      port: 27017
+  type: ClusterIP
