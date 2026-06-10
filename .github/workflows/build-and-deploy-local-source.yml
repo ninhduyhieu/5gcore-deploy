@@ -144,7 +144,14 @@ jobs:
             fi
           else
             OWNER="ninhduyhieu"
-            TAG="sha-$(echo ${{ github.sha }} | cut -c1-7)"
+            # LOGIC: chỉ tạo SHA tag khi thực sự build image mới.
+            # Nếu không build (chỉ sửa k8s manifest, webui, v.v.) thì dùng
+            # tag "latest" — image đó đã tồn tại trên GHCR từ lần build trước.
+            if [ "${{ needs.detect-changes.outputs.need_build }}" = "true" ]; then
+              TAG="sha-$(echo ${{ github.sha }} | cut -c1-7)"
+            else
+              TAG="latest"
+            fi
           fi
 
           [ -z "$OWNER" ] && OWNER="ninhduyhieu"
