@@ -23,7 +23,7 @@ spec:
             name: pran-config
       containers:
         - name: pran
-          image: ghcr.io/ninhduyhieu/b5gc-pran:sha-942ce06
+          image: ghcr.io/ninhduyhieu/b5gc-pran:manual-20260611-045123
           imagePullPolicy: Always
           command: ["/bin/sh", "-c"]
           args: ["sleep 60 && ./pran -c /etc/config/pran.json"]

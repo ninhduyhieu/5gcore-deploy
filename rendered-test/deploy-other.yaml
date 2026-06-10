@@ -23,7 +23,7 @@ spec:
             name: ausf-config
       containers:
         - name: ausf
-          image: ghcr.io/ninhduyhieu/b5gc-ausf:sha-942ce06
+          image: ghcr.io/ninhduyhieu/b5gc-ausf:manual-20260611-045123
           imagePullPolicy: Always
           command: ["./ausf"]
           args: ["-c", "/etc/config/ausf.json"]
@@ -80,7 +80,7 @@ spec:
             name: udm-config
       containers:
         - name: udm
-          image: ghcr.io/ninhduyhieu/b5gc-udm:sha-942ce06
+          image: ghcr.io/ninhduyhieu/b5gc-udm:manual-20260611-045123
           imagePullPolicy: Always
           command: ["./udm"]
           args: ["-c", "/etc/config/udm.json"]
@@ -137,7 +137,7 @@ spec:
             name: pcf-config
       containers:
         - name: pcf
-          image: ghcr.io/ninhduyhieu/b5gc-pcf:sha-942ce06
+          image: ghcr.io/ninhduyhieu/b5gc-pcf:manual-20260611-045123
           imagePullPolicy: Always
           command: ["./pcf"]
           args: ["-c", "/etc/config/pcf.json"]
@@ -194,7 +194,7 @@ spec:
             name: damf-config
       containers:
         - name: damf
-          image: ghcr.io/ninhduyhieu/b5gc-damf:sha-942ce06
+          image: ghcr.io/ninhduyhieu/b5gc-damf:manual-20260611-045123
           imagePullPolicy: Always
           command: ["./damf"]
           args: ["-c", "/etc/config/damf.json"]
@@ -259,7 +259,7 @@ spec:
             name: amf-10-100-config
       containers:
         - name: amf
-          image: ghcr.io/ninhduyhieu/b5gc-amf:sha-942ce06
+          image: ghcr.io/ninhduyhieu/b5gc-amf:manual-20260611-045123
           imagePullPolicy: Always
           command: ["./amf"]
           args: ["-c", "/etc/config/amf.json"]
@@ -299,7 +299,7 @@ spec:
             name: amf-10-100-config
       containers:
         - name: amf
-          image: ghcr.io/ninhduyhieu/b5gc-amf:sha-942ce06
+          image: ghcr.io/ninhduyhieu/b5gc-amf:manual-20260611-045123
           imagePullPolicy: Always
           command: ["./amf"]
           args: ["-c", "/etc/config/amf.json"]
@@ -360,7 +360,7 @@ spec:
             name: smf-slice1-config
       containers:
         - name: smf
-          image: ghcr.io/ninhduyhieu/b5gc-smf:sha-942ce06
+          image: ghcr.io/ninhduyhieu/b5gc-smf:manual-20260611-045123
           imagePullPolicy: Always
           command: ["./smf"]
           args: ["-c", "/etc/config/smf.json"]
@@ -426,7 +426,7 @@ spec:
             name: smf-slice2-config
       containers:
         - name: smf
-          image: ghcr.io/ninhduyhieu/b5gc-smf:sha-942ce06
+          image: ghcr.io/ninhduyhieu/b5gc-smf:manual-20260611-045123
           imagePullPolicy: Always
           command: ["./smf"]
           args: ["-c", "/etc/config/smf.json"]

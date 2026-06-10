@@ -21,7 +21,7 @@ spec:
             name: nsm-config
       containers:
         - name: nsm
-          image: ghcr.io/ninhduyhieu/b5gc-nsm:sha-942ce06
+          image: ghcr.io/ninhduyhieu/b5gc-nsm:manual-20260611-045123
           imagePullPolicy: Always
           command: ["./nsm"]
           args: ["-c", "/etc/config/nsm.json"]
