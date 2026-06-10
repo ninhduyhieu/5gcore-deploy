@@ -216,7 +216,7 @@ jobs:
 
           # ── BƯỚC 3: Xử lý Vagrant state ───────────────────────────────────
           for vm in k3s-server-1 k3s-agent-1 k3s-agent-2; do
-            state=$(vagrant status "$vm" --machine-readable               | awk -F, '/,state,/{print $4}' | tail -1)
+            state=$(vagrant status "$vm" --machine-readable 2>/dev/null               | awk -F, '/,state,/{print $4}' | tail -1 || true)
             echo "$vm vagrant state: ${state:-unknown}"
             if [ "$state" = "aborted" ] || [ "$state" = "saved" ]; then
               vagrant halt -f "$vm" || true
