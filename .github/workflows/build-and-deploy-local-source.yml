@@ -200,8 +200,13 @@ jobs:
           set -e
           cd "$INFRA_DIR"
 
-          get_port() { vagrant ssh-config "$1" 2>/dev/null | awk '/^\s*Port /{print $2}'; }
-          get_key()  { vagrant ssh-config "$1" 2>/dev/null | awk '/^\s*IdentityFile /{print $2}'; }
+          get_port() { vagrant ssh-config "$1" 2>/dev/null | awk '/^\s*Port /{print $2; exit}'; }
+          # Vagrant có thể liệt kê nhiều IdentityFile (ed25519 + rsa) trên nhiều dòng.
+          # Lấy dòng đầu tiên (ed25519) để $GITHUB_ENV không bị "Invalid format".
+          # SSH config file sẽ liệt kê cả hai key để fallback hoạt động đúng.
+          get_key()  { vagrant ssh-config "$1" 2>/dev/null | awk '/^\s*IdentityFile /{print $2; exit}'; }
+          # Lấy tất cả IdentityFile của một VM (để ghi vào SSH config file)
+          get_keys() { vagrant ssh-config "$1" 2>/dev/null | awk '/^\s*IdentityFile /{print $2}'; }
 
           PORT_SERVER1=$(get_port k3s-server-1)
           PORT_AGENT1=$(get_port  k3s-agent-1)
@@ -219,37 +224,28 @@ jobs:
           done
           echo "Ports: server=$PORT_SERVER1  agent1=$PORT_AGENT1  agent2=$PORT_AGENT2"
 
-          printf '%s\n' \
-            "Host k3s-server-1" \
-            "  HostName 127.0.0.1" \
-            "  User vagrant" \
-            "  Port ${PORT_SERVER1}" \
-            "  IdentityFile ${KEY_SERVER1}" \
-            "  StrictHostKeyChecking no" \
-            "  UserKnownHostsFile /dev/null" \
-            "  PasswordAuthentication no" \
-            "  LogLevel FATAL" \
-            "" \
-            "Host k3s-agent-1" \
-            "  HostName 127.0.0.1" \
-            "  User vagrant" \
-            "  Port ${PORT_AGENT1}" \
-            "  IdentityFile ${KEY_AGENT1}" \
-            "  StrictHostKeyChecking no" \
-            "  UserKnownHostsFile /dev/null" \
-            "  PasswordAuthentication no" \
-            "  LogLevel FATAL" \
-            "" \
-            "Host k3s-agent-2" \
-            "  HostName 127.0.0.1" \
-            "  User vagrant" \
-            "  Port ${PORT_AGENT2}" \
-            "  IdentityFile ${KEY_AGENT2}" \
-            "  StrictHostKeyChecking no" \
-            "  UserKnownHostsFile /dev/null" \
-            "  PasswordAuthentication no" \
-            "  LogLevel FATAL" \
-            > "$INFRA_DIR/.vagrant-ssh-config"
+          # Hàm ghi block SSH config cho một VM — IdentityFile ghi từng dòng riêng
+          write_ssh_block() {
+            local vm=$1 port=$2
+            printf 'Host %s\n' "$vm"
+            printf '  HostName 127.0.0.1\n'
+            printf '  User vagrant\n'
+            printf '  Port %s\n' "$port"
+            get_keys "$vm" | while IFS= read -r keyfile; do
+              printf '  IdentityFile %s\n' "$keyfile"
+            done
+            printf '  StrictHostKeyChecking no\n'
+            printf '  UserKnownHostsFile /dev/null\n'
+            printf '  PasswordAuthentication no\n'
+            printf '  LogLevel FATAL\n'
+            printf '\n'
+          }
+
+          {
+            write_ssh_block "k3s-server-1" "$PORT_SERVER1"
+            write_ssh_block "k3s-agent-1"  "$PORT_AGENT1"
+            write_ssh_block "k3s-agent-2"  "$PORT_AGENT2"
+          } > "$INFRA_DIR/.vagrant-ssh-config"
 
           chmod 600 "$INFRA_DIR/.vagrant-ssh-config"
           echo "=== Generated SSH config ==="
@@ -389,17 +385,22 @@ jobs:
 
           patch_ssh_entry() {
             local vm=$1
-            local port key cfg
+            local port cfg
             cfg="$INFRA_DIR/.vagrant-ssh-config"
-            port=$(vagrant ssh-config "$vm" 2>/dev/null | awk '/^\s*Port /{print $2}')
-            key=$(vagrant ssh-config  "$vm" 2>/dev/null | awk '/^\s*IdentityFile /{print $2}')
+            port=$(vagrant ssh-config "$vm" 2>/dev/null | awk '/^\s*Port /{print $2; exit}')
             [ -z "$port" ] && echo "WARNING: could not get port for $vm" && return
 
+            # Xoá block cũ của VM này
             awk -v vm="$vm" '/^Host / { in_block = ($2 == vm) } !in_block { print }' \
               "$cfg" | sed '/^$/N;/^\n$/d' > "${cfg}.tmp"
 
-            printf '\nHost %s\n  HostName 127.0.0.1\n  User vagrant\n  Port %s\n  IdentityFile %s\n  StrictHostKeyChecking no\n  UserKnownHostsFile /dev/null\n  PasswordAuthentication no\n  LogLevel FATAL\n' \
-              "$vm" "$port" "$key" >> "${cfg}.tmp"
+            # Ghi block mới với tất cả IdentityFile (ed25519 + rsa nếu có)
+            printf '\nHost %s\n  HostName 127.0.0.1\n  User vagrant\n  Port %s\n' \
+              "$vm" "$port" >> "${cfg}.tmp"
+            vagrant ssh-config "$vm" 2>/dev/null \
+              | awk '/^\s*IdentityFile /{print "  IdentityFile " $2}' >> "${cfg}.tmp"
+            printf '  StrictHostKeyChecking no\n  UserKnownHostsFile /dev/null\n  PasswordAuthentication no\n  LogLevel FATAL\n' \
+              >> "${cfg}.tmp"
 
             mv "${cfg}.tmp" "$cfg"
             chmod 600 "$cfg"
