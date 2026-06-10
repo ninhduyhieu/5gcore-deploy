@@ -15,19 +15,25 @@ on:
   push:
     branches: [main, develop]
 
+# LOGIC: cancel-in-progress=true an toàn vì infra-ensure reuse VM (không destroy).
+# Nếu cancel giữa chừng khi đang vagrant up, lần chạy tiếp theo sẽ resume VM.
 concurrency:
   group: deploy-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
+  # ─────────────────────────────────────────────────────────────────────────────
   validate:
+  # ─────────────────────────────────────────────────────────────────────────────
     name: "CI · Validate Syntax"
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
 
+      # ubuntu-latest dùng python3. pip3 + --break-system-packages tránh
+      # lỗi "externally-managed-environment" trên Ubuntu 22.04+.
       - name: Install validation tools
-        run: pip install yamllint ansible
+        run: pip3 install --break-system-packages yamllint ansible
 
       - name: Lint YAML files
         run: |
@@ -38,15 +44,17 @@ jobs:
       - name: Check Ansible playbook syntax
         run: ansible-playbook --syntax-check -i inventory/hosts.yaml playbook.yml
 
+  # ─────────────────────────────────────────────────────────────────────────────
   detect-changes:
+  # ─────────────────────────────────────────────────────────────────────────────
     name: "CI · Detect Changes"
     runs-on: ubuntu-latest
     outputs:
-      need_infra: ${{ steps.detect.outputs.need_infra }}
-      need_build: ${{ steps.detect.outputs.need_build }}
-      need_deploy: ${{ steps.detect.outputs.need_deploy }}
+      need_infra:      ${{ steps.detect.outputs.need_infra }}
+      need_build:      ${{ steps.detect.outputs.need_build }}
+      need_deploy:     ${{ steps.detect.outputs.need_deploy }}
       need_monitoring: ${{ steps.detect.outputs.need_monitoring }}
-      need_webui: ${{ steps.detect.outputs.need_webui }}
+      need_webui:      ${{ steps.detect.outputs.need_webui }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -59,11 +67,11 @@ jobs:
           set -e
 
           if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            echo "need_infra=true" >> "$GITHUB_OUTPUT"
-            echo "need_build=true" >> "$GITHUB_OUTPUT"
-            echo "need_deploy=true" >> "$GITHUB_OUTPUT"
+            echo "need_infra=true"      >> "$GITHUB_OUTPUT"
+            echo "need_build=true"      >> "$GITHUB_OUTPUT"
+            echo "need_deploy=true"     >> "$GITHUB_OUTPUT"
             echo "need_monitoring=true" >> "$GITHUB_OUTPUT"
-            echo "need_webui=true" >> "$GITHUB_OUTPUT"
+            echo "need_webui=true"      >> "$GITHUB_OUTPUT"
             exit 0
           fi
 
@@ -77,23 +85,31 @@ jobs:
           NEED_MONITORING=false
           NEED_WEBUI=false
 
-          echo "$CHANGED" | grep -qE '(^Vagrantfile$|^inventory/|^roles/|^playbook\.yml$)' && NEED_INFRA=true || true
-          echo "$CHANGED" | grep -qE '(^docker/|nf\.Dockerfile$)' && NEED_BUILD=true || true
-          echo "$CHANGED" | grep -qE '(^k8s/|^scripts/render-ghcr-images\.sh$)' && NEED_DEPLOY=true || true
-          echo "$CHANGED" | grep -qE '^observability/' && NEED_MONITORING=true || true
-          echo "$CHANGED" | grep -qE '^webui/' && NEED_WEBUI=true || true
+          echo "$CHANGED" | grep -qE '(^Vagrantfile$|^inventory/|^roles/|^playbook\.yml$)' && NEED_INFRA=true      || true
+          echo "$CHANGED" | grep -qE '(^docker/|nf\.Dockerfile$)'                          && NEED_BUILD=true      || true
+          echo "$CHANGED" | grep -qE '(^k8s/|^scripts/render-ghcr-images\.sh$)'            && NEED_DEPLOY=true     || true
+          echo "$CHANGED" | grep -qE '^observability/'                                      && NEED_MONITORING=true || true
+          echo "$CHANGED" | grep -qE '^webui/'                                              && NEED_WEBUI=true      || true
 
+          # Build mới → phải deploy lại image mới
           if [ "$NEED_BUILD" = "true" ]; then
             NEED_DEPLOY=true
           fi
 
-          echo "need_infra=$NEED_INFRA" >> "$GITHUB_OUTPUT"
-          echo "need_build=$NEED_BUILD" >> "$GITHUB_OUTPUT"
-          echo "need_deploy=$NEED_DEPLOY" >> "$GITHUB_OUTPUT"
+          echo "need_infra=$NEED_INFRA"           >> "$GITHUB_OUTPUT"
+          echo "need_build=$NEED_BUILD"           >> "$GITHUB_OUTPUT"
+          echo "need_deploy=$NEED_DEPLOY"         >> "$GITHUB_OUTPUT"
           echo "need_monitoring=$NEED_MONITORING" >> "$GITHUB_OUTPUT"
-          echo "need_webui=$NEED_WEBUI" >> "$GITHUB_OUTPUT"
+          echo "need_webui=$NEED_WEBUI"           >> "$GITHUB_OUTPUT"
 
+  # ─────────────────────────────────────────────────────────────────────────────
   infra-ensure:
+  # ─────────────────────────────────────────────────────────────────────────────
+    # LOGIC: infra-ensure LUÔN chạy với mọi push/dispatch vì:
+    # 1. Cluster health check cần xác nhận VM alive trước khi deploy.
+    # 2. SSH config + Ansible inventory phải được regenerate mỗi lần
+    #    (VM có thể đã restart, port key có thể đổi).
+    # Các step tốn kém (Ansible apply, APT) có guard `if: need_infra == 'true'`.
     name: "CD · Ensure Infra Healthy"
     runs-on: [self-hosted, linux, x64]
     needs: [validate, detect-changes]
@@ -101,7 +117,7 @@ jobs:
       INFRA_DIR: ${{ vars.INFRA_DIR || '' }}
     outputs:
       image_owner: ${{ steps.vars.outputs.owner }}
-      image_tag: ${{ steps.vars.outputs.tag }}
+      image_tag:   ${{ steps.vars.outputs.tag }}
     steps:
       - uses: actions/checkout@v4
 
@@ -110,6 +126,9 @@ jobs:
         run: |
           echo "INFRA_DIR=${INFRA_DIR:-$HOME/5gcore-deploy}" >> "$GITHUB_ENV"
 
+      # rsync --delete + đủ exclude để không xóa runtime files.
+      # rendered/ và rendered-test/ exclude vì chúng được tạo in-place trên runner,
+      # không có trong GITHUB_WORKSPACE nên --delete sẽ xóa mất.
       - name: Sync latest infra code
         shell: bash
         run: |
@@ -122,6 +141,8 @@ jobs:
             --exclude 'kubeconfig' \
             --exclude '.vagrant-ssh-config' \
             --exclude '.ansible-vagrant-inventory.yaml' \
+            --exclude 'rendered/' \
+            --exclude 'rendered-test/' \
             "$GITHUB_WORKSPACE"/ "$INFRA_DIR"/
 
       - name: Generate image tag
@@ -143,15 +164,13 @@ jobs:
           fi
 
           [ -z "$OWNER" ] && OWNER="ninhduyhieu"
-          [ -z "$TAG" ] && TAG="latest"
+          [ -z "$TAG"   ] && TAG="latest"
 
-          echo "OWNER=$OWNER"
-          echo "TAG=$TAG"
-
+          echo "OWNER=$OWNER  TAG=$TAG"
           echo "owner=$OWNER" >> "$GITHUB_OUTPUT"
-          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "tag=$TAG"     >> "$GITHUB_OUTPUT"
 
-      - name: Ensure Vagrant VMs are running with stable ports
+      - name: Ensure Vagrant VMs are running
         shell: bash
         run: |
           set -e
@@ -161,69 +180,163 @@ jobs:
           vagrant status || true
 
           for vm in k3s-server-1 k3s-agent-1 k3s-agent-2; do
-            state=$(vagrant status "$vm" --machine-readable | awk -F, '/,state,/{print $4}' | tail -1)
+            state=$(vagrant status "$vm" --machine-readable \
+              | awk -F, '/,state,/{print $4}' | tail -1)
             echo "$vm state: ${state:-unknown}"
-
             if [ "$state" = "aborted" ] || [ "$state" = "saved" ]; then
               vagrant halt -f "$vm" || true
             fi
           done
 
-          # Do not destroy existing VMs. Reuse them so SSH ports and VM identity stay stable.
+          # Reuse VM — không destroy để SSH port giữ nguyên 2200/2201/2202.
           timeout 20m vagrant up --no-parallel
 
-          {
-            vagrant ssh-config k3s-server-1
-            vagrant ssh-config k3s-agent-1
-            vagrant ssh-config k3s-agent-2
-          } > "$INFRA_DIR/.vagrant-ssh-config"
-
-          chmod 600 "$INFRA_DIR/.vagrant-ssh-config" || true
-
-          echo "=== Generated SSH config ==="
-          cat "$INFRA_DIR/.vagrant-ssh-config"
-
-          for vm in k3s-server-1 k3s-agent-1 k3s-agent-2; do
-            ssh -F "$INFRA_DIR/.vagrant-ssh-config" "$vm" "echo SSH_OK_$vm"
-          done
-
-      - name: Generate Ansible inventory using Vagrant aliases
+      # Dùng printf thay heredoc — heredoc trong YAML run block bị indent
+      # theo cấu trúc YAML, làm SSH config parser đọc sai (Host bị thụt vào).
+      # HostName = 127.0.0.1 (không dùng alias VM name).
+      - name: Generate SSH config
         shell: bash
         run: |
           set -e
           cd "$INFRA_DIR"
 
-          rm -f .ansible-vagrant-inventory.yaml
-          {
-            echo "all:"
-            echo "  hosts:"
-            echo "    k3s-server-1:"
-            echo "      ansible_host: k3s-server-1"
-            echo "      ansible_user: vagrant"
-            echo "      ansible_python_interpreter: /usr/bin/python3"
-            echo "      ansible_ssh_common_args: '-F $INFRA_DIR/.vagrant-ssh-config -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null'"
-            echo "      node_ip: 192.168.58.11"
-            echo "    k3s-agent-1:"
-            echo "      ansible_host: k3s-agent-1"
-            echo "      ansible_user: vagrant"
-            echo "      ansible_python_interpreter: /usr/bin/python3"
-            echo "      ansible_ssh_common_args: '-F $INFRA_DIR/.vagrant-ssh-config -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null'"
-            echo "      node_ip: 192.168.58.12"
-            echo "    k3s-agent-2:"
-            echo "      ansible_host: k3s-agent-2"
-            echo "      ansible_user: vagrant"
-            echo "      ansible_python_interpreter: /usr/bin/python3"
-            echo "      ansible_ssh_common_args: '-F $INFRA_DIR/.vagrant-ssh-config -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null'"
-            echo "      node_ip: 192.168.58.13"
-            echo "  children:"
-            echo "    masters:"
-            echo "      hosts:"
-            echo "        k3s-server-1:"
-            echo "    workers:"
-            echo "      hosts:"
-            echo "        k3s-agent-1:"
-            echo "        k3s-agent-2:"
-          } > .ansible-vagrant-inventory.yaml
+          get_port() { vagrant ssh-config "$1" 2>/dev/null | awk '/^\s*Port /{print $2}'; }
+          get_key()  { vagrant ssh-config "$1" 2>/dev/null | awk '/^\s*IdentityFile /{print $2}'; }
+
+          PORT_SERVER1=$(get_port k3s-server-1)
+          PORT_AGENT1=$(get_port  k3s-agent-1)
+          PORT_AGENT2=$(get_port  k3s-agent-2)
+          KEY_SERVER1=$(get_key   k3s-server-1)
+          KEY_AGENT1=$(get_key    k3s-agent-1)
+          KEY_AGENT2=$(get_key    k3s-agent-2)
+
+          for var in PORT_SERVER1 PORT_AGENT1 PORT_AGENT2 KEY_SERVER1 KEY_AGENT1 KEY_AGENT2; do
+            val=$(eval echo "\$$var")
+            if [ -z "$val" ]; then
+              echo "ERROR: failed to parse $var from vagrant ssh-config"
+              exit 1
+            fi
+          done
+          echo "Ports: server=$PORT_SERVER1  agent1=$PORT_AGENT1  agent2=$PORT_AGENT2"
+
+          printf '%s\n' \
+            "Host k3s-server-1" \
+            "  HostName 127.0.0.1" \
+            "  User vagrant" \
+            "  Port ${PORT_SERVER1}" \
+            "  IdentityFile ${KEY_SERVER1}" \
+            "  StrictHostKeyChecking no" \
+            "  UserKnownHostsFile /dev/null" \
+            "  PasswordAuthentication no" \
+            "  LogLevel FATAL" \
+            "" \
+            "Host k3s-agent-1" \
+            "  HostName 127.0.0.1" \
+            "  User vagrant" \
+            "  Port ${PORT_AGENT1}" \
+            "  IdentityFile ${KEY_AGENT1}" \
+            "  StrictHostKeyChecking no" \
+            "  UserKnownHostsFile /dev/null" \
+            "  PasswordAuthentication no" \
+            "  LogLevel FATAL" \
+            "" \
+            "Host k3s-agent-2" \
+            "  HostName 127.0.0.1" \
+            "  User vagrant" \
+            "  Port ${PORT_AGENT2}" \
+            "  IdentityFile ${KEY_AGENT2}" \
+            "  StrictHostKeyChecking no" \
+            "  UserKnownHostsFile /dev/null" \
+            "  PasswordAuthentication no" \
+            "  LogLevel FATAL" \
+            > "$INFRA_DIR/.vagrant-ssh-config"
+
+          chmod 600 "$INFRA_DIR/.vagrant-ssh-config"
+          echo "=== Generated SSH config ==="
+          cat "$INFRA_DIR/.vagrant-ssh-config"
+
+          echo "PORT_SERVER1=$PORT_SERVER1" >> "$GITHUB_ENV"
+          echo "PORT_AGENT1=$PORT_AGENT1"   >> "$GITHUB_ENV"
+          echo "PORT_AGENT2=$PORT_AGENT2"   >> "$GITHUB_ENV"
+          echo "KEY_SERVER1=$KEY_SERVER1"   >> "$GITHUB_ENV"
+          echo "KEY_AGENT1=$KEY_AGENT1"     >> "$GITHUB_ENV"
+          echo "KEY_AGENT2=$KEY_AGENT2"     >> "$GITHUB_ENV"
+
+      # Retry 10 lần — SSH daemon chưa sẵn sàng ngay sau khi VM boot.
+      # StrictHostKeyChecking=no tránh "REMOTE HOST IDENTIFICATION HAS CHANGED"
+      # khi VM restart và đổi host key.
+      - name: Verify SSH connectivity with retry
+        shell: bash
+        run: |
+          set -e
+
+          for vm in k3s-server-1 k3s-agent-1 k3s-agent-2; do
+            echo "--- Testing SSH to $vm ---"
+            ok=false
+            for attempt in $(seq 1 10); do
+              if ssh \
+                   -F "$INFRA_DIR/.vagrant-ssh-config" \
+                   -o StrictHostKeyChecking=no \
+                   -o UserKnownHostsFile=/dev/null \
+                   -o ConnectTimeout=10 \
+                   "$vm" "echo SSH_OK_$vm"; then
+                ok=true
+                break
+              fi
+              echo "  Attempt $attempt/10 failed — waiting 15s..."
+              sleep 15
+            done
+            if [ "$ok" = "false" ]; then
+              echo "ERROR: cannot SSH into $vm after 10 attempts."
+              exit 1
+            fi
+          done
+
+      # ansible_host = 127.0.0.1 + ansible_port tường minh thay vì alias VM.
+      # ansible_ssh_common_args là chuỗi đơn (không dùng YAML >- block
+      # vì >- có thể sinh newline và break ansible argument parsing).
+      - name: Generate Ansible inventory
+        shell: bash
+        run: |
+          set -e
+          cd "$INFRA_DIR"
+
+          printf '%s\n' \
+            "all:" \
+            "  hosts:" \
+            "    k3s-server-1:" \
+            "      ansible_host: 127.0.0.1" \
+            "      ansible_port: ${PORT_SERVER1}" \
+            "      ansible_user: vagrant" \
+            "      ansible_ssh_private_key_file: ${KEY_SERVER1}" \
+            "      ansible_python_interpreter: /usr/bin/python3" \
+            "      ansible_ssh_common_args: '-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null'" \
+            "      node_ip: 192.168.58.11" \
+            "    k3s-agent-1:" \
+            "      ansible_host: 127.0.0.1" \
+            "      ansible_port: ${PORT_AGENT1}" \
+            "      ansible_user: vagrant" \
+            "      ansible_ssh_private_key_file: ${KEY_AGENT1}" \
+            "      ansible_python_interpreter: /usr/bin/python3" \
+            "      ansible_ssh_common_args: '-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null'" \
+            "      node_ip: 192.168.58.12" \
+            "    k3s-agent-2:" \
+            "      ansible_host: 127.0.0.1" \
+            "      ansible_port: ${PORT_AGENT2}" \
+            "      ansible_user: vagrant" \
+            "      ansible_ssh_private_key_file: ${KEY_AGENT2}" \
+            "      ansible_python_interpreter: /usr/bin/python3" \
+            "      ansible_ssh_common_args: '-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null'" \
+            "      node_ip: 192.168.58.13" \
+            "  children:" \
+            "    masters:" \
+            "      hosts:" \
+            "        k3s-server-1:" \
+            "    workers:" \
+            "      hosts:" \
+            "        k3s-agent-1:" \
+            "        k3s-agent-2:" \
+            > .ansible-vagrant-inventory.yaml
 
           echo "=== Generated Ansible inventory ==="
           cat .ansible-vagrant-inventory.yaml
@@ -238,7 +351,9 @@ jobs:
           for vm in k3s-server-1 k3s-agent-1 k3s-agent-2; do
             vagrant ssh "$vm" -c \
               "sudo killall -9 apt-get apt dpkg 2>/dev/null || true; \
-               sudo rm -f /var/lib/dpkg/lock-frontend /var/lib/apt/lists/lock /var/lib/dpkg/lock; \
+               sudo rm -f /var/lib/dpkg/lock-frontend \
+                          /var/lib/apt/lists/lock \
+                          /var/lib/dpkg/lock; \
                sudo dpkg --configure -a || true" || true
           done
 
@@ -250,9 +365,16 @@ jobs:
           cd "$INFRA_DIR"
 
           ANSIBLE_HOST_KEY_CHECKING=False \
-          ansible-playbook -i .ansible-vagrant-inventory.yaml playbook.yml -vv
+          ansible-playbook \
+            -i .ansible-vagrant-inventory.yaml \
+            playbook.yml -vv
 
-      - name: Cluster Health Check with Auto-Heal
+      # patch_ssh_entry dùng awk thuần — không dùng python3 -c multiline
+      # (gây lỗi YAML parser vì code Python ở cột 0 bị đọc như YAML key).
+      #
+      # LOGIC sleep 120: chỉ sleep khi thực sự có VM được restart.
+      # Nếu tất cả VM đều Ready → skip sleep, tiết kiệm 2 phút mỗi lần push.
+      - name: Cluster health check with auto-heal
         shell: bash
         run: |
           set -e
@@ -265,31 +387,56 @@ jobs:
           echo "Initial node state..."
           kubectl get nodes -o wide || true
 
-          echo "Auto-heal Vagrant workers if NotReady..."
+          patch_ssh_entry() {
+            local vm=$1
+            local port key cfg
+            cfg="$INFRA_DIR/.vagrant-ssh-config"
+            port=$(vagrant ssh-config "$vm" 2>/dev/null | awk '/^\s*Port /{print $2}')
+            key=$(vagrant ssh-config  "$vm" 2>/dev/null | awk '/^\s*IdentityFile /{print $2}')
+            [ -z "$port" ] && echo "WARNING: could not get port for $vm" && return
 
+            awk -v vm="$vm" '/^Host / { in_block = ($2 == vm) } !in_block { print }' \
+              "$cfg" | sed '/^$/N;/^\n$/d' > "${cfg}.tmp"
+
+            printf '\nHost %s\n  HostName 127.0.0.1\n  User vagrant\n  Port %s\n  IdentityFile %s\n  StrictHostKeyChecking no\n  UserKnownHostsFile /dev/null\n  PasswordAuthentication no\n  LogLevel FATAL\n' \
+              "$vm" "$port" "$key" >> "${cfg}.tmp"
+
+            mv "${cfg}.tmp" "$cfg"
+            chmod 600 "$cfg"
+            echo "Patched SSH config for $vm (port=$port)"
+          }
+
+          healed=false
           for vm in k3s-agent-1 k3s-agent-2; do
-            if ! kubectl get node "$vm" -o jsonpath='{.status.conditions[?(@.type=="Ready")].status}' 2>/dev/null | grep -q True; then
-              echo "$vm is NotReady -> restart VM and k3s-agent"
+            if ! kubectl get node "$vm" \
+                   -o jsonpath='{.status.conditions[?(@.type=="Ready")].status}' \
+                   2>/dev/null | grep -q True; then
+              echo "$vm is NotReady → restart VM and k3s-agent"
               vagrant halt -f "$vm" || true
               timeout 10m vagrant up "$vm" --no-provision
-              vagrant ssh "$vm" -c "sudo systemctl restart k3s-agent || sudo systemctl restart k3s || true"
+              patch_ssh_entry "$vm"
+              vagrant ssh "$vm" -c \
+                "sudo systemctl restart k3s-agent || sudo systemctl restart k3s || true"
+              healed=true
             fi
           done
 
-          echo "Give kubelet/k3s-agent/Calico time to settle..."
-          sleep 120
+          # Chỉ sleep khi thực sự có VM vừa được restart
+          if [ "$healed" = "true" ]; then
+            echo "Waiting for kubelet and Calico to settle after heal..."
+            sleep 120
+          fi
 
-          echo "Final node state before wait..."
-          kubectl get nodes -o wide || true
+          echo "Final node state..."
+          kubectl get nodes -o wide          || true
           kubectl get pods -n kube-system -o wide || true
 
-          echo "Wait for all nodes..."
           kubectl wait --for=condition=Ready node/k3s-server-1 --timeout=600s
-          kubectl wait --for=condition=Ready node/k3s-agent-1 --timeout=900s
-          kubectl wait --for=condition=Ready node/k3s-agent-2 --timeout=900s
+          kubectl wait --for=condition=Ready node/k3s-agent-1  --timeout=900s
+          kubectl wait --for=condition=Ready node/k3s-agent-2  --timeout=900s
 
-          echo "Wait for Calico..."
-          kubectl wait --for=condition=Ready pod \
+          kubectl wait \
+            --for=condition=Ready pod \
             -n kube-system \
             -l k8s-app=calico-node \
             --timeout=900s
@@ -297,7 +444,9 @@ jobs:
           kubectl get nodes -o wide
           kubectl get pods -A -o wide
 
+  # ─────────────────────────────────────────────────────────────────────────────
   pre-deploy-test:
+  # ─────────────────────────────────────────────────────────────────────────────
     name: "CI · Pre-Deploy Test"
     runs-on: [self-hosted, linux, x64]
     needs: [infra-ensure, detect-changes]
@@ -311,7 +460,7 @@ jobs:
         run: |
           echo "INFRA_DIR=${INFRA_DIR:-$HOME/5gcore-deploy}" >> "$GITHUB_ENV"
 
-      - name: Run simple smoke tests before deploy
+      - name: Run smoke tests before deploy
         shell: bash
         run: |
           set -e
@@ -322,25 +471,26 @@ jobs:
           kubectl get nodes -o wide
           kubectl get pods -n kube-system -o wide
 
-          echo "=== Check manifests exist ==="
-          test -f k8s/ctrl.yaml
-          test -f k8s/gw.yaml
-          test -f k8s/nsm.yaml
-          test -f k8s/mongo.yaml
-          test -f k8s/deploy-other.yaml
-          test -f k8s/pran.yaml
-          test -x scripts/render-ghcr-images.sh
-
-          echo "=== Dry-run render/apply manifests when deploy is needed ==="
+          # LOGIC: manifest check và dry-run chỉ cần thiết khi sẽ deploy.
+          # Nếu chỉ commit webui/monitoring thì không cần validate k8s manifest.
           if [ "${{ needs.detect-changes.outputs.need_deploy }}" = "true" ]; then
+            echo "=== Check manifests exist ==="
+            test -f k8s/ctrl.yaml
+            test -f k8s/gw.yaml
+            test -f k8s/nsm.yaml
+            test -f k8s/mongo.yaml
+            test -f k8s/deploy-other.yaml
+            test -f k8s/pran.yaml
+            test -x scripts/render-ghcr-images.sh
+
+            echo "=== Dry-run render/apply manifests ==="
             OWNER="${{ needs.infra-ensure.outputs.image_owner }}"
             TAG="${{ needs.infra-ensure.outputs.image_tag }}"
             [ -z "$OWNER" ] && OWNER="ninhduyhieu"
-            [ -z "$TAG" ] && TAG="latest"
+            [ -z "$TAG"   ] && TAG="latest"
 
             ./scripts/render-ghcr-images.sh "$OWNER" "$TAG" rendered-test
 
-            echo "=== Ensure namespace exists for server-side validation ==="
             kubectl create namespace etri6g \
               --dry-run=client -o yaml | kubectl apply -f -
 
@@ -350,26 +500,29 @@ jobs:
             done
           fi
 
+  # ─────────────────────────────────────────────────────────────────────────────
   app-delivery:
+  # ─────────────────────────────────────────────────────────────────────────────
     name: "CD · Build & Deploy Application"
     runs-on: [self-hosted, linux, x64]
     needs: [infra-ensure, detect-changes, pre-deploy-test]
     env:
-      INFRA_DIR: ${{ vars.INFRA_DIR || '' }}
+      INFRA_DIR:  ${{ vars.INFRA_DIR  || '' }}
       SOURCE_DIR: ${{ vars.SOURCE_DIR || '' }}
       DOCKER_DIR: ${{ vars.DOCKER_DIR || '' }}
-      WEBUI_DIR: ${{ vars.WEBUI_DIR || '' }}
+      WEBUI_DIR:  ${{ vars.WEBUI_DIR  || '' }}
     steps:
       - uses: actions/checkout@v4
 
       - name: Resolve paths
         shell: bash
         run: |
-          echo "INFRA_DIR=${INFRA_DIR:-$HOME/5gcore-deploy}" >> "$GITHUB_ENV"
-          echo "SOURCE_DIR=${SOURCE_DIR:-$HOME/Downloads/etrib5gc}" >> "$GITHUB_ENV"
+          echo "INFRA_DIR=${INFRA_DIR:-$HOME/5gcore-deploy}"               >> "$GITHUB_ENV"
+          echo "SOURCE_DIR=${SOURCE_DIR:-$HOME/Downloads/etrib5gc}"        >> "$GITHUB_ENV"
           echo "DOCKER_DIR=${DOCKER_DIR:-$HOME/Downloads/etrib5gc/docker}" >> "$GITHUB_ENV"
-          echo "WEBUI_DIR=${WEBUI_DIR:-$HOME/Downloads/5gc-webui}" >> "$GITHUB_ENV"
+          echo "WEBUI_DIR=${WEBUI_DIR:-$HOME/Downloads/5gc-webui}"         >> "$GITHUB_ENV"
 
+      # rsync SAU KHI infra-ensure tạo SSH config — exclude đủ để không xóa mất.
       - name: Sync manifest, scripts and observability configs
         shell: bash
         run: |
@@ -382,6 +535,8 @@ jobs:
             --exclude 'kubeconfig' \
             --exclude '.vagrant-ssh-config' \
             --exclude '.ansible-vagrant-inventory.yaml' \
+            --exclude 'rendered/' \
+            --exclude 'rendered-test/' \
             "$GITHUB_WORKSPACE"/ "$INFRA_DIR"/
 
       - name: Login to GHCR
@@ -392,18 +547,26 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      # LOGIC: DOCKER_DIR phải tồn tại trên runner. Nếu không, job fail rõ ràng
+      # ngay từ đầu thay vì fail mơ hồ bên trong copybuild.sh.
       - name: Build & Push 5G Core Images
         if: needs.detect-changes.outputs.need_build == 'true'
         shell: bash
         run: |
           set -e
+
+          if [ ! -d "$DOCKER_DIR" ]; then
+            echo "ERROR: DOCKER_DIR=$DOCKER_DIR does not exist on this runner."
+            echo "Set the DOCKER_DIR variable in GitHub repo settings."
+            exit 1
+          fi
+
           cd "$DOCKER_DIR"
 
           OWNER="${{ needs.infra-ensure.outputs.image_owner }}"
           TAG="${{ needs.infra-ensure.outputs.image_tag }}"
-
           [ -z "$OWNER" ] && OWNER="ninhduyhieu"
-          [ -z "$TAG" ] && TAG="latest"
+          [ -z "$TAG"   ] && TAG="latest"
 
           echo "Building with OWNER=$OWNER TAG=$TAG"
 
@@ -427,7 +590,6 @@ jobs:
               -t "ghcr.io/${OWNER}/b5gc-${module}:${TAG}" \
               -t "ghcr.io/${OWNER}/b5gc-${module}:latest" \
               -f nf.Dockerfile .
-
             docker push "ghcr.io/${OWNER}/b5gc-${module}:${TAG}"
             docker push "ghcr.io/${OWNER}/b5gc-${module}:latest"
           done
@@ -438,13 +600,16 @@ jobs:
               -t "ghcr.io/${OWNER}/b5gc-${nf}:${TAG}" \
               -t "ghcr.io/${OWNER}/b5gc-${nf}:latest" \
               -f nf.Dockerfile .
-
             docker push "ghcr.io/${OWNER}/b5gc-${nf}:${TAG}"
             docker push "ghcr.io/${OWNER}/b5gc-${nf}:latest"
           done
 
-      - name: Pre-deploy Cluster Gate with Auto-Heal
-        if: needs.detect-changes.outputs.need_deploy == 'true' || needs.detect-changes.outputs.need_monitoring == 'true'
+      # cd "$INFRA_DIR" trước vagrant — Vagrant tìm .vagrant/ từ CWD.
+      # LOGIC sleep 120: chỉ sleep khi có VM bị restart (healed=true).
+      - name: Pre-deploy cluster gate with auto-heal
+        if: >
+          needs.detect-changes.outputs.need_deploy == 'true' ||
+          needs.detect-changes.outputs.need_monitoring == 'true'
         shell: bash
         run: |
           set -e
@@ -454,24 +619,31 @@ jobs:
           echo "Checking K3s API /cacerts..."
           curl -k --fail https://192.168.58.11:6443/cacerts >/dev/null
 
-          echo "Initial node state..."
           kubectl get nodes -o wide || true
 
+          healed=false
           for vm in k3s-agent-1 k3s-agent-2; do
-            if ! kubectl get node "$vm" -o jsonpath='{.status.conditions[?(@.type=="Ready")].status}' 2>/dev/null | grep -q True; then
-              echo "$vm is NotReady -> restart"
+            if ! kubectl get node "$vm" \
+                   -o jsonpath='{.status.conditions[?(@.type=="Ready")].status}' \
+                   2>/dev/null | grep -q True; then
+              echo "$vm is NotReady → restart"
               vagrant halt -f "$vm" || true
               timeout 10m vagrant up "$vm" --no-provision
-              vagrant ssh "$vm" -c "sudo systemctl restart k3s-agent || sudo systemctl restart k3s || true"
+              vagrant ssh "$vm" -c \
+                "sudo systemctl restart k3s-agent || sudo systemctl restart k3s || true"
+              healed=true
             fi
           done
 
-          sleep 120
+          if [ "$healed" = "true" ]; then
+            echo "Waiting for healed nodes to settle..."
+            sleep 120
+          fi
 
           kubectl get nodes -o wide
           kubectl wait --for=condition=Ready node/k3s-server-1 --timeout=600s
-          kubectl wait --for=condition=Ready node/k3s-agent-1 --timeout=900s
-          kubectl wait --for=condition=Ready node/k3s-agent-2 --timeout=900s
+          kubectl wait --for=condition=Ready node/k3s-agent-1  --timeout=900s
+          kubectl wait --for=condition=Ready node/k3s-agent-2  --timeout=900s
 
       - name: Apply Kubernetes Manifests
         if: needs.detect-changes.outputs.need_deploy == 'true'
@@ -483,11 +655,11 @@ jobs:
 
           OWNER="${{ needs.infra-ensure.outputs.image_owner }}"
           TAG="${{ needs.infra-ensure.outputs.image_tag }}"
-
           [ -z "$OWNER" ] && OWNER="ninhduyhieu"
-          [ -z "$TAG" ] && TAG="latest"
+          [ -z "$TAG"   ] && TAG="latest"
 
-          kubectl create namespace etri6g --dry-run=client -o yaml | kubectl apply -f -
+          kubectl create namespace etri6g \
+            --dry-run=client -o yaml | kubectl apply -f -
 
           ./scripts/render-ghcr-images.sh "$OWNER" "$TAG" rendered
 
@@ -498,26 +670,30 @@ jobs:
           kubectl apply -f rendered/deploy-other.yaml
           kubectl apply -f rendered/pran.yaml
 
-      - name: Wait for 5GC Deployments with rollback
+      - name: Wait for 5GC deployments with rollback
         if: needs.detect-changes.outputs.need_deploy == 'true'
         shell: bash
         run: |
           set -e
           export KUBECONFIG="$INFRA_DIR/kubeconfig"
 
-          DEPLOYMENTS="ctrl-dep gateway-dep nsm-dep udr-mongo ausf-dep udm-dep pcf-dep damf-dep amf-10-100-agent1-dep amf-10-100-agent2-dep smf-slice1-dep smf-slice2-dep pran-dep"
+          DEPLOYMENTS="ctrl-dep gateway-dep nsm-dep udr-mongo \
+            ausf-dep udm-dep pcf-dep damf-dep \
+            amf-10-100-agent1-dep amf-10-100-agent2-dep \
+            smf-slice1-dep smf-slice2-dep pran-dep"
 
           failed=""
           for dep in $DEPLOYMENTS; do
             echo "Checking rollout: $dep"
-            if ! kubectl rollout status "deployment/${dep}" -n etri6g --timeout=300s; then
+            if ! kubectl rollout status "deployment/${dep}" \
+                   -n etri6g --timeout=300s; then
               echo "Rollout failed: $dep"
               failed="$failed $dep"
             fi
           done
 
           if [ -n "$failed" ]; then
-            echo "Rollback deployments:$failed"
+            echo "Rolling back:$failed"
             for dep in $failed; do
               kubectl rollout undo "deployment/${dep}" -n etri6g || true
             done
@@ -525,7 +701,7 @@ jobs:
             exit 1
           fi
 
-      - name: Deploy Monitoring Stack Loki Alloy Grafana
+      - name: Deploy Monitoring Stack (Loki / Alloy / Grafana)
         if: needs.detect-changes.outputs.need_monitoring == 'true'
         shell: bash
         run: |
@@ -533,7 +709,8 @@ jobs:
           export KUBECONFIG="$INFRA_DIR/kubeconfig"
           cd "$INFRA_DIR"
 
-          kubectl create namespace observability --dry-run=client -o yaml | kubectl apply -f -
+          kubectl create namespace observability \
+            --dry-run=client -o yaml | kubectl apply -f -
 
           helm repo add grafana https://grafana.github.io/helm-charts || true
           helm repo update
@@ -555,32 +732,57 @@ jobs:
 
           kubectl get pods -n observability -o wide
 
-      - name: Restart Dashboard Application WebUI
-        if: needs.detect-changes.outputs.need_webui == 'true' || github.event_name == 'workflow_dispatch'
+      # LOGIC: pkill bằng pattern đủ tốt cho môi trường dev local.
+      # Lưu PID vào file để verify process thực sự lên sau khi start.
+      - name: Restart Dashboard Application (WebUI)
+        if: >
+          needs.detect-changes.outputs.need_webui == 'true' ||
+          github.event_name == 'workflow_dispatch'
         shell: bash
         run: |
           set -e
 
           pkill -f "uvicorn server:app" || true
-          pkill -f "vite" || true
+          pkill -f "vite"               || true
           sleep 2
 
           cd "$WEBUI_DIR/backend"
           export PROJECT_DIR="$INFRA_DIR"
           export K8S_NAMESPACE=etri6g
-          nohup uvicorn server:app --host 0.0.0.0 --port 8000 > /tmp/webui-backend.log 2>&1 &
+          nohup uvicorn server:app --host 0.0.0.0 --port 8000 \
+            > /tmp/webui-backend.log 2>&1 &
+          echo $! > /tmp/webui-backend.pid
 
           cd "$WEBUI_DIR/frontend"
-          nohup npm run dev -- --host 0.0.0.0 > /tmp/webui-frontend.log 2>&1 &
+          nohup npm run dev -- --host 0.0.0.0 \
+            > /tmp/webui-frontend.log 2>&1 &
+          echo $! > /tmp/webui-frontend.pid
 
-      - name: Verify Current State
+          sleep 5
+
+          # Verify cả hai process thực sự đang chạy
+          if ! kill -0 "$(cat /tmp/webui-backend.pid)" 2>/dev/null; then
+            echo "ERROR: backend failed to start. Last log:"
+            tail -20 /tmp/webui-backend.log
+            exit 1
+          fi
+          if ! kill -0 "$(cat /tmp/webui-frontend.pid)" 2>/dev/null; then
+            echo "ERROR: frontend failed to start. Last log:"
+            tail -20 /tmp/webui-frontend.log
+            exit 1
+          fi
+          echo "WebUI backend PID=$(cat /tmp/webui-backend.pid) OK"
+          echo "WebUI frontend PID=$(cat /tmp/webui-frontend.pid) OK"
+
+      # kubectl get nodes dùng || true — nếu cluster down thì step verify
+      # không nên fail toàn bộ pipeline (deploy đã xong rồi).
+      - name: Verify current state
         shell: bash
         run: |
-          set -e
           export KUBECONFIG="$INFRA_DIR/kubeconfig"
 
           echo "=== Nodes ==="
-          kubectl get nodes -o wide
+          kubectl get nodes -o wide || true
 
           echo "=== 5G Pods ==="
           kubectl get pods -n etri6g -o wide || true
@@ -588,5 +790,5 @@ jobs:
           echo "=== Observability Pods ==="
           kubectl get pods -n observability -o wide || true
 
-          echo "=== WebUI Process ==="
+          echo "=== WebUI Processes ==="
           pgrep -af "uvicorn server:app|vite" || true
