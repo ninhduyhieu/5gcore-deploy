@@ -179,16 +179,52 @@ jobs:
           echo "=== Vagrant status before boot ==="
           vagrant status || true
 
+          # ── BƯỚC 1: Sync VirtualBox state về Vagrant ──────────────────────
+          # Khi job bị cancel giữa chừng hoặc host tắt đột ngột, VirtualBox
+          # vẫn còn VM nhưng .vagrant/ mất track → Vagrant báo "not_created"
+          # trong khi VBoxHeadless đang giữ port. Phát hiện và fix tự động:
+          for vbox_vm in "5gcore-deploy_k3s-server-1" "5gcore-deploy_k3s-agent-1" "5gcore-deploy_k3s-agent-2"; do
+            vbox_state=$(VBoxManage showvminfo "$vbox_vm" --machinereadable 2>/dev/null               | awk -F'"' '/^VMState=/{print $2}')
+            if [ -n "$vbox_state" ]; then
+              echo "VirtualBox: $vbox_vm = $vbox_state"
+              if [ "$vbox_state" = "running" ] || [ "$vbox_state" = "starting" ]; then
+                echo "  → Force poweroff $vbox_vm (orphan VM)"
+                VBoxManage controlvm "$vbox_vm" poweroff || true
+                sleep 3
+              fi
+            fi
+          done
+
+          # ── BƯỚC 2: Kill VBoxHeadless còn giữ port SSH ────────────────────
+          for port in 2200 2201 2202; do
+            pid=$(sudo ss -tlnp 2>/dev/null               | awk -v p=":${port} " '$0 ~ p {match($0,/pid=([0-9]+)/,a); print a[1]}')
+            if [ -n "$pid" ]; then
+              echo "Port $port held by PID $pid — killing..."
+              sudo kill -9 "$pid" || true
+            fi
+          done
+          sleep 3
+
+          # Verify port sạch
+          for port in 2200 2201 2202; do
+            if ss -tlnp 2>/dev/null | grep -q ":${port} "; then
+              echo "ERROR: port $port still in use after cleanup"
+              exit 1
+            fi
+          done
+          echo "All SSH ports are free."
+
+          # ── BƯỚC 3: Xử lý Vagrant state ───────────────────────────────────
           for vm in k3s-server-1 k3s-agent-1 k3s-agent-2; do
-            state=$(vagrant status "$vm" --machine-readable \
-              | awk -F, '/,state,/{print $4}' | tail -1)
-            echo "$vm state: ${state:-unknown}"
+            state=$(vagrant status "$vm" --machine-readable               | awk -F, '/,state,/{print $4}' | tail -1)
+            echo "$vm vagrant state: ${state:-unknown}"
             if [ "$state" = "aborted" ] || [ "$state" = "saved" ]; then
               vagrant halt -f "$vm" || true
             fi
           done
 
-          # Reuse VM — không destroy để SSH port giữ nguyên 2200/2201/2202.
+          # ── BƯỚC 4: Up ────────────────────────────────────────────────────
+          # Reuse VM nếu đã tồn tại — không destroy để giữ k3s state.
           timeout 20m vagrant up --no-parallel
 
       # Dùng printf thay heredoc — heredoc trong YAML run block bị indent
