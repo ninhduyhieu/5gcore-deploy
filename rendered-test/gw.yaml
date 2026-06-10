@@ -20,7 +20,7 @@ spec:
             name: gateway-config
       containers:
         - name: b5gc-gateway
-          image: ghcr.io/ninhduyhieu/b5gc-gateway:manual-20260610-021729
+          image: ghcr.io/ninhduyhieu/b5gc-gateway:manual-20260610-234238
           imagePullPolicy: Always
           command: ["./gateway"]
           args: ["-c", "/etc/config/gateway.json"]

@@ -19,7 +19,7 @@ spec:
             name: ctrl-config
       containers:
         - name: b5gc-ctrl
-          image: ghcr.io/ninhduyhieu/b5gc-controller:manual-20260610-021729
+          image: ghcr.io/ninhduyhieu/b5gc-controller:manual-20260610-234238
           imagePullPolicy: Always
           command: ["./controller"]
           args: ["-c", "/etc/config/controller.json"]
