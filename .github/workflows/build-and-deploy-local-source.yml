@@ -186,15 +186,47 @@ jobs:
           cd "$INFRA_DIR"
 
           get_port() { vagrant ssh-config "$1" 2>/dev/null | awk '/^\s*Port /{print $2; exit}'; }
-          get_key()  { vagrant ssh-config "$1" 2>/dev/null | awk '/^\s*IdentityFile /{print $2; exit}'; }
           get_keys() { vagrant ssh-config "$1" 2>/dev/null | awk '/^\s*IdentityFile /{print $2}'; }
+
+          # FIX: Vagrant liệt kê nhiều key (ed25519 + rsa) nhưng box có thể chỉ
+          # chấp nhận một trong số đó (box ubuntu2204 chỉ có RSA pubkey).
+          # Test từng key thực tế và trả về key đầu tiên connect thành công.
+          get_working_key() {
+            local vm=$1 port=$2
+            local key
+            while IFS= read -r key; do
+              if ssh -i "$key" \
+                   -o StrictHostKeyChecking=no \
+                   -o UserKnownHostsFile=/dev/null \
+                   -o PasswordAuthentication=no \
+                   -o ConnectTimeout=10 \
+                   -p "$port" vagrant@127.0.0.1 "true" 2>/dev/null; then
+                echo "$key"
+                return 0
+              fi
+            done < <(get_keys "$vm")
+            return 1
+          }
 
           PORT_SERVER1=$(get_port k3s-server-1)
           PORT_AGENT1=$(get_port  k3s-agent-1)
           PORT_AGENT2=$(get_port  k3s-agent-2)
-          KEY_SERVER1=$(get_key   k3s-server-1)
-          KEY_AGENT1=$(get_key    k3s-agent-1)
-          KEY_AGENT2=$(get_key    k3s-agent-2)
+
+          # Đợi SSH daemon sẵn sàng rồi mới test key (retry tối đa 10 lần)
+          wait_and_get_key() {
+            local vm=$1 port=$2
+            local key=""
+            for attempt in $(seq 1 10); do
+              key=$(get_working_key "$vm" "$port") && break
+              echo "  No working key for $vm yet (attempt $attempt/10), waiting 15s..." >&2
+              sleep 15
+            done
+            echo "$key"
+          }
+
+          KEY_SERVER1=$(wait_and_get_key k3s-server-1 "$PORT_SERVER1")
+          KEY_AGENT1=$(wait_and_get_key  k3s-agent-1  "$PORT_AGENT1")
+          KEY_AGENT2=$(wait_and_get_key  k3s-agent-2  "$PORT_AGENT2")
 
           for var in PORT_SERVER1 PORT_AGENT1 PORT_AGENT2 KEY_SERVER1 KEY_AGENT1 KEY_AGENT2; do
             val=$(eval echo "\$$var")
@@ -205,15 +237,15 @@ jobs:
           done
           echo "Ports: server=$PORT_SERVER1  agent1=$PORT_AGENT1  agent2=$PORT_AGENT2"
 
+          # Ghi block SSH config — IdentityFile là key đã được verify hoạt động
           write_ssh_block() {
-            local vm=$1 port=$2
+            local vm=$1 port=$2 key=$3
             printf 'Host %s\n' "$vm"
             printf '  HostName 127.0.0.1\n'
             printf '  User vagrant\n'
             printf '  Port %s\n' "$port"
-            get_keys "$vm" | while IFS= read -r keyfile; do
-              printf '  IdentityFile %s\n' "$keyfile"
-            done
+            printf '  IdentityFile %s\n' "$key"
+            printf '  IdentitiesOnly yes\n'
             printf '  StrictHostKeyChecking no\n'
             printf '  UserKnownHostsFile /dev/null\n'
             printf '  PasswordAuthentication no\n'
@@ -222,9 +254,9 @@ jobs:
           }
 
           {
-            write_ssh_block "k3s-server-1" "$PORT_SERVER1"
-            write_ssh_block "k3s-agent-1"  "$PORT_AGENT1"
-            write_ssh_block "k3s-agent-2"  "$PORT_AGENT2"
+            write_ssh_block "k3s-server-1" "$PORT_SERVER1" "$KEY_SERVER1"
+            write_ssh_block "k3s-agent-1"  "$PORT_AGENT1"  "$KEY_AGENT1"
+            write_ssh_block "k3s-agent-2"  "$PORT_AGENT2"  "$KEY_AGENT2"
           } > "$INFRA_DIR/.vagrant-ssh-config"
 
           chmod 600 "$INFRA_DIR/.vagrant-ssh-config"
